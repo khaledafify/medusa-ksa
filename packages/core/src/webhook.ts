@@ -167,3 +167,26 @@ export function verifyWebhook(
   // length mismatch short-circuits to `false`.
   return safeEqual(signature, expectedHex) || safeEqual(signature, expectedBase64);
 }
+
+/**
+ * Verifies a shared secret token in constant time.
+ *
+ * Some gateways (e.g. Moyasar) authenticate webhooks with a static
+ * `secret_token` carried in the payload instead of an HMAC signature header.
+ * This helper compares the received value against the configured token using
+ * {@link timingSafeEqual} semantics, so the comparison leaks no timing
+ * information.
+ *
+ * Fails closed and **never throws**: a missing/non-string received value, an
+ * empty received token, or an empty configured token all yield `false` — an
+ * unconfigured secret must never verify anything.
+ *
+ * @param received The token taken from the webhook request (untrusted input).
+ * @param expected The configured shared secret token.
+ */
+export function verifySecretToken(received: unknown, expected: string): boolean {
+  if (typeof received !== "string" || received.length === 0 || !expected) {
+    return false;
+  }
+  return safeEqual(received, expected);
+}

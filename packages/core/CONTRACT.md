@@ -53,9 +53,11 @@ withIdempotency<T>(key: string, fn: () => Promise<T>): Promise<T>
 
 ```ts
 verifyWebhook(raw: Buffer | string, signature: string, secret: string, opts?: { toleranceSec?: number }): boolean
+verifySecretToken(received: unknown, expected: string): boolean
 ```
 - **Constant-time** HMAC comparison; rejects on mismatch (caller returns `401`).
 - Timestamp tolerance defends against replay. Callers also **dedupe by event id** and process asynchronously, returning `2xx` fast.
+- `verifySecretToken` covers gateways that authenticate webhooks with a static shared token in the payload (e.g. Moyasar) instead of an HMAC header — same constant-time, fail-closed semantics.
 
 ## Secrets at rest
 

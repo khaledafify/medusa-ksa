@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
-import { verifyWebhook } from "./webhook.js";
+import { verifySecretToken, verifyWebhook } from "./webhook.js";
 
 const SECRET = "whsec_test_secret";
 const BODY = JSON.stringify({ id: "evt_123", type: "payment.captured" });
@@ -215,5 +215,35 @@ describe("verifyWebhook", () => {
         verifyWebhook(BODY, "deadbeef", SECRET, { timestamp, toleranceSec, now })
       ).toBe(false);
     });
+  });
+});
+
+describe("verifySecretToken", () => {
+  const TOKEN = "whtok_test_token";
+
+  it("returns true when the received token matches the expected token", () => {
+    expect(verifySecretToken(TOKEN, TOKEN)).toBe(true);
+  });
+
+  it("returns false for a wrong token", () => {
+    expect(verifySecretToken("whtok_wrong", TOKEN)).toBe(false);
+  });
+
+  it("returns false for a token of a different length without throwing", () => {
+    expect(() => verifySecretToken("short", TOKEN)).not.toThrow();
+    expect(verifySecretToken("short", TOKEN)).toBe(false);
+  });
+
+  it("returns false when the received token is missing or not a string", () => {
+    expect(verifySecretToken(undefined, TOKEN)).toBe(false);
+    expect(verifySecretToken(null, TOKEN)).toBe(false);
+    expect(verifySecretToken(42, TOKEN)).toBe(false);
+    expect(verifySecretToken("", TOKEN)).toBe(false);
+  });
+
+  it("fails closed when the expected token is empty", () => {
+    // An unconfigured secret must never verify anything, even "" === "".
+    expect(verifySecretToken("", "")).toBe(false);
+    expect(verifySecretToken("anything", "")).toBe(false);
   });
 });
