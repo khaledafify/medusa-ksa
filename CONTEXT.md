@@ -56,6 +56,16 @@ _Avoid_: submission, sync.
 B2B/B2G invoice (buyer VAT + address, goes through Clearance) / B2C invoice (QR-stamped, goes through Reporting).
 _Avoid_: tax invoice, receipt.
 
+## Payments
+
+**Source**:
+A single-use token the storefront produces (via the gateway's client SDK, e.g. Moyasar.js) representing the customer's payment instrument; the backend creates a payment from it.
+_Avoid_: token, card, payment method.
+
+**Requires more action**:
+The session state when a payment can't complete server-side alone and the customer must be redirected (e.g. a 3-D Secure challenge). The provider surfaces a redirect URL; the final outcome is confirmed by webhook, never by the browser return.
+_Avoid_: pending (too generic), redirect.
+
 ## Configuration
 
 **Sandbox**:
