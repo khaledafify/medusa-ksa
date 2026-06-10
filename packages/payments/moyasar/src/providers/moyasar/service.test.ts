@@ -1,0 +1,438 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { MedusaError } from "@medusajs/framework/utils";
+
+import { KsaError } from "@medusa-ksa/core";
+
+import type { MoyasarClient } from "./client.js";
+import { MoyasarProviderService, paymentIdForSession } from "./service.js";
+import type {
+  MoyasarCreatePaymentRequest,
+  MoyasarPayment,
+  MoyasarSessionData,
+} from "./types.js";
+
+const OPTIONS = {
+  secretKey: "sk_test_secret123",
+  publishableKey: "pk_test_pub123",
+};
+
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function paidPayment(overrides: Partial<MoyasarPayment> = {}): MoyasarPayment {
+  return {
+    id: "pay_1",
+    status: "paid",
+    amount: 4_999,
+    currency: "SAR",
+    captured: 4_999,
+    metadata: { session_id: "payses_1" },
+    source: { type: "creditcard", message: "APPROVED" },
+    ...overrides,
+  };
+}
+
+function makeService(client: Partial<MoyasarClient> = {}): MoyasarProviderService {
+  const service = new MoyasarProviderService({}, OPTIONS);
+  Reflect.set(service, "client_", client);
+  return service;
+}
+
+function sessionData(overrides: Partial<MoyasarSessionData> = {}): MoyasarSessionData {
+  return {
+    status: "pending",
+    publishable_key: OPTIONS.publishableKey,
+    amount: 4_999,
+    currency: "SAR",
+    session_id: "payses_1",
+    source: { type: "token", token: "tok_1" },
+    callback_url: "https://store.example/3ds/return",
+    ...overrides,
+  };
+}
+
+describe("identifier and options", () => {
+  it("registers under the moyasar identifier", () => {
+    expect(MoyasarProviderService.identifier).toBe("moyasar");
+  });
+
+  it("fails fast at boot when required options are missing", () => {
+    expect(() =>
+      MoyasarProviderService.validateOptions({ publishableKey: "pk_test_x" }),
+    ).toThrowError(/MOYASAR_SECRET_KEY/);
+  });
+
+  it("accepts valid options at boot", () => {
+    expect(() => MoyasarProviderService.validateOptions(OPTIONS)).not.toThrow();
+  });
+
+  it("throws at construction when options are invalid", () => {
+    expect(() => new MoyasarProviderService({}, {})).toThrowError(
+      /MOYASAR_SECRET_KEY/,
+    );
+  });
+});
+
+describe("initiatePayment", () => {
+  it("makes no API call and returns pending session data with the publishable key and halalas amount", async () => {
+    const createPayment = vi.fn();
+    const service = makeService({ createPayment });
+
+    const result = await service.initiatePayment({
+      amount: 49.99,
+      currency_code: "sar",
+      data: { session_id: "payses_1" },
+    });
+
+    expect(createPayment).not.toHaveBeenCalled();
+    expect(result.id).toBe("payses_1");
+    expect(result.status).toBe("pending");
+    expect(result.data).toMatchObject({
+      status: "pending",
+      publishable_key: OPTIONS.publishableKey,
+      amount: 4_999,
+      currency: "SAR",
+      session_id: "payses_1",
+    });
+  });
+
+  it("rejects a non-SAR currency", async () => {
+    const service = makeService();
+
+    await expect(
+      service.initiatePayment({
+        amount: 10,
+        currency_code: "usd",
+        data: { session_id: "payses_1" },
+      }),
+    ).rejects.toSatisfy(
+      (err) =>
+        MedusaError.isMedusaError(err) && (err as Error).message.includes('SAR'),
+    );
+  });
+
+  it("carries the description into session data when provided", async () => {
+    const service = makeService();
+
+    const result = await service.initiatePayment({
+      amount: 10,
+      currency_code: "SAR",
+      data: { session_id: "payses_1", description: "Order 1001" },
+    });
+
+    expect(result.data).toMatchObject({ description: "Order 1001" });
+  });
+});
+
+describe("authorizePayment", () => {
+  it("charges the source and maps a paid payment to authorized", async () => {
+    const createPayment = vi.fn(
+      async (_req: MoyasarCreatePaymentRequest) => paidPayment(),
+    );
+    const service = makeService({ createPayment });
+
+    const result = await service.authorizePayment({ data: sessionData() });
+
+    expect(result.status).toBe("authorized");
+    expect(result.data).toMatchObject({
+      moyasar_payment_id: "pay_1",
+      status: "paid",
+    });
+    expect(createPayment).toHaveBeenCalledTimes(1);
+    const request = createPayment.mock.calls[0]![0];
+    expect(request).toMatchObject({
+      amount: 4_999,
+      currency: "SAR",
+      callback_url: "https://store.example/3ds/return",
+      source: { type: "token", token: "tok_1" },
+      metadata: { session_id: "payses_1" },
+    });
+    expect(String(request.given_id)).toMatch(UUID_V4);
+  });
+
+  it("derives a deterministic given_id from the session id (provider-side idempotency)", async () => {
+    expect(paymentIdForSession("payses_1")).toBe(paymentIdForSession("payses_1"));
+    expect(paymentIdForSession("payses_1")).not.toBe(
+      paymentIdForSession("payses_2"),
+    );
+    expect(paymentIdForSession("payses_1")).toMatch(UUID_V4);
+  });
+
+  it("strips the single-use source from the session data it returns", async () => {
+    const service = makeService({ createPayment: async () => paidPayment() });
+
+    const result = await service.authorizePayment({ data: sessionData() });
+
+    expect(result.data).not.toHaveProperty("source");
+  });
+
+  it("maps an initiated payment with a transaction_url to requires_more and surfaces the redirect", async () => {
+    const service = makeService({
+      createPayment: async () =>
+        paidPayment({
+          status: "initiated",
+          captured: 0,
+          source: {
+            type: "creditcard",
+            transaction_url: "https://api.moyasar.com/3ds/challenge",
+          },
+        }),
+    });
+
+    const result = await service.authorizePayment({ data: sessionData() });
+
+    expect(result.status).toBe("requires_more");
+    expect(result.data).toMatchObject({
+      transaction_url: "https://api.moyasar.com/3ds/challenge",
+      moyasar_payment_id: "pay_1",
+    });
+  });
+
+  it("maps a failed payment to the error status", async () => {
+    const service = makeService({
+      createPayment: async () =>
+        paidPayment({
+          status: "failed",
+          captured: 0,
+          source: { type: "creditcard", message: "DECLINED" },
+        }),
+    });
+
+    const result = await service.authorizePayment({ data: sessionData() });
+
+    expect(result.status).toBe("error");
+  });
+
+  it("re-checks the existing payment instead of charging twice on re-authorization after 3DS", async () => {
+    const createPayment = vi.fn();
+    const fetchPayment = vi.fn(async () => paidPayment());
+    const service = makeService({ createPayment, fetchPayment });
+
+    const result = await service.authorizePayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(createPayment).not.toHaveBeenCalled();
+    expect(fetchPayment).toHaveBeenCalledWith("pay_1");
+    expect(result.status).toBe("authorized");
+  });
+
+  it("collapses concurrent authorizations for the same session into one charge", async () => {
+    let resolveCreate: ((p: MoyasarPayment) => void) | undefined;
+    const createPayment = vi.fn(
+      () =>
+        new Promise<MoyasarPayment>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const service = makeService({ createPayment });
+
+    const first = service.authorizePayment({ data: sessionData() });
+    const second = service.authorizePayment({ data: sessionData() });
+    resolveCreate!(paidPayment());
+
+    const [a, b] = await Promise.all([first, second]);
+    expect(createPayment).toHaveBeenCalledTimes(1);
+    expect(a.status).toBe("authorized");
+    expect(b.status).toBe("authorized");
+  });
+
+  it("rejects authorization when the storefront has not written back a source", async () => {
+    const service = makeService();
+
+    await expect(
+      service.authorizePayment({ data: sessionData({ source: undefined }) }),
+    ).rejects.toSatisfy(
+      (err) =>
+        MedusaError.isMedusaError(err) && (err as Error).message.includes('source'),
+    );
+  });
+
+  it("rejects authorization when the storefront has not written back a callback_url", async () => {
+    const service = makeService();
+
+    await expect(
+      service.authorizePayment({
+        data: sessionData({ callback_url: undefined }),
+      }),
+    ).rejects.toSatisfy(
+      (err) =>
+        MedusaError.isMedusaError(err) &&
+        (err as Error).message.includes('callback_url'),
+    );
+  });
+
+  it("never leaks the secret key in authorization errors", async () => {
+    const service = makeService({
+      createPayment: async () => {
+        throw new KsaError("POST /payments responded 401: ***", {
+          prefix: "core",
+          code: "http_error",
+        });
+      },
+    });
+
+    let caught: unknown;
+    try {
+      await service.authorizePayment({ data: sessionData() });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect((caught as Error).message).not.toContain(OPTIONS.secretKey);
+  });
+});
+
+describe("capturePayment", () => {
+  it("confirms an already-captured payment without any write call", async () => {
+    const fetchPayment = vi.fn(async () => paidPayment());
+    const service = makeService({ fetchPayment });
+
+    const result = await service.capturePayment({
+      data: sessionData({ moyasar_payment_id: "pay_1", source: undefined }),
+    });
+
+    expect(fetchPayment).toHaveBeenCalledWith("pay_1");
+    expect(result.data).toMatchObject({ status: "paid" });
+  });
+
+  it("is idempotent — confirming twice is two reads, never a write", async () => {
+    const fetchPayment = vi.fn(async () => paidPayment());
+    const service = makeService({ fetchPayment });
+    const data = sessionData({ moyasar_payment_id: "pay_1" });
+
+    await service.capturePayment({ data });
+    await service.capturePayment({ data });
+
+    expect(fetchPayment).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects confirmation when the payment was never captured by Moyasar", async () => {
+    const service = makeService({
+      fetchPayment: async () => paidPayment({ status: "failed", captured: 0 }),
+    });
+
+    await expect(
+      service.capturePayment({
+        data: sessionData({ moyasar_payment_id: "pay_1" }),
+      }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+  });
+
+  it("rejects confirmation when no Moyasar payment exists yet", async () => {
+    const service = makeService();
+
+    await expect(
+      service.capturePayment({ data: sessionData() }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+  });
+});
+
+describe("getPaymentStatus", () => {
+  const cases: [MoyasarPayment["status"], string][] = [
+    ["paid", "captured"],
+    ["captured", "captured"],
+    ["authorized", "authorized"],
+    ["failed", "error"],
+    ["voided", "canceled"],
+    ["refunded", "captured"],
+    ["verified", "pending"],
+  ];
+
+  it.each(cases)("maps Moyasar %s to Medusa %s", async (moyasar, medusa) => {
+    const service = makeService({
+      fetchPayment: async () => paidPayment({ status: moyasar }),
+    });
+
+    const result = await service.getPaymentStatus({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(result.status).toBe(medusa);
+  });
+
+  it("maps an initiated payment with a 3DS challenge to requires_more", async () => {
+    const service = makeService({
+      fetchPayment: async () =>
+        paidPayment({
+          status: "initiated",
+          source: { type: "creditcard", transaction_url: "https://3ds" },
+        }),
+    });
+
+    const result = await service.getPaymentStatus({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(result.status).toBe("requires_more");
+  });
+
+  it("reports pending while no Moyasar payment exists yet", async () => {
+    const service = makeService();
+
+    const result = await service.getPaymentStatus({ data: sessionData() });
+
+    expect(result.status).toBe("pending");
+  });
+});
+
+describe("retrievePayment", () => {
+  it("returns the payment as found at Moyasar", async () => {
+    const payment = paidPayment();
+    const service = makeService({ fetchPayment: async () => payment });
+
+    const result = await service.retrievePayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(result.data).toMatchObject({ id: "pay_1", status: "paid" });
+  });
+
+  it("rejects retrieval when no Moyasar payment exists yet", async () => {
+    const service = makeService();
+
+    await expect(
+      service.retrievePayment({ data: sessionData() }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+  });
+});
+
+describe("updatePayment", () => {
+  it("recomputes the halalas amount while no Moyasar payment exists", async () => {
+    const service = makeService();
+
+    const result = await service.updatePayment({
+      amount: 100.5,
+      currency_code: "SAR",
+      data: sessionData(),
+    });
+
+    expect(result.data).toMatchObject({ amount: 10_050, currency: "SAR" });
+  });
+
+  it("rejects an amount change after the Moyasar payment was created", async () => {
+    const service = makeService();
+
+    await expect(
+      service.updatePayment({
+        amount: 999,
+        currency_code: "SAR",
+        data: sessionData({ moyasar_payment_id: "pay_1" }),
+      }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+  });
+
+  it("keeps the session unchanged when the amount is identical after creation", async () => {
+    const data = sessionData({ moyasar_payment_id: "pay_1" });
+    const service = makeService();
+
+    const result = await service.updatePayment({
+      amount: 49.99,
+      currency_code: "SAR",
+      data,
+    });
+
+    expect(result.data).toMatchObject({ moyasar_payment_id: "pay_1" });
+  });
+});

@@ -60,6 +60,9 @@ module.exports = {
     tsPreCompilationDeps: true,
     // Don't crawl into installed deps; we only assert HOW @medusajs/* is required, not its internals.
     doNotFollow: { path: "node_modules" },
+    // Boundary rules apply to source, not to generated build output (`medusa plugin:build`
+    // emits .medusa/server, including admin-extension shims that import @medusajs/* directly).
+    exclude: { path: "\\.medusa/" },
     // Resolve through the pnpm-workspace symlinked node_modules and prefer types where present.
     enhancedResolveOptions: {
       exportsFields: ["exports"],

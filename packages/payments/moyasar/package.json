@@ -11,6 +11,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@medusajs/admin-shared": "^2.13.0",
     "@medusajs/cli": "^2.13.0",
     "@medusajs/framework": "^2.13.0",
     "@medusajs/medusa": "^2.13.0",
