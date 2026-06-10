@@ -28,10 +28,20 @@ describe("resolveMoyasarOptions", () => {
     expect(err.message).toContain("dashboard.moyasar.com");
   });
 
-  it("throws a KsaError naming MOYASAR_PUBLISHABLE_KEY when the publishable key is missing", () => {
+  it("boots on the secret key alone — the publishable key is optional (hosted-redirect default)", () => {
+    const options = resolveMoyasarOptions({ secretKey: "sk_test_abc" }, EMPTY_ENV);
+
+    expect(options.secretKey).toBe("sk_test_abc");
+    expect(options.publishableKey).toBeUndefined();
+  });
+
+  it("rejects an empty publishable key when one is supplied", () => {
     let caught: unknown;
     try {
-      resolveMoyasarOptions({ secretKey: "sk_test_abc" }, EMPTY_ENV);
+      resolveMoyasarOptions(
+        { secretKey: "sk_test_abc", publishableKey: "" },
+        EMPTY_ENV,
+      );
     } catch (err) {
       caught = err;
     }

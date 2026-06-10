@@ -22,10 +22,12 @@ const ENV_MAP: EnvMap = {
 };
 
 /**
- * Provider options (ADR-0005): `secretKey` + `publishableKey` are required,
- * `webhookSecret` is optional but strongly recommended. There is deliberately
- * no `capture` option (Moyasar captures immediately on a successful
- * `POST /payments`) and no mode flag (sandbox is detected from the key prefix).
+ * Provider options (ADR-0005): `secretKey` is required; `publishableKey` is
+ * optional — it is only needed for the embedded source path (Moyasar.js), and
+ * the hosted-redirect default works on the secret key alone. `webhookSecret`
+ * is optional but strongly recommended. There is deliberately no `capture`
+ * option (Moyasar captures immediately on a successful `POST /payments`) and
+ * no mode flag (sandbox is detected from the key prefix).
  */
 const moyasarOptionsSchema = z.object({
   secretKey: z
@@ -35,11 +37,9 @@ const moyasarOptionsSchema = z.object({
     })
     .min(1, `must not be empty — ${KEY_HINT}`),
   publishableKey: z
-    .string({
-      required_error: `is required — ${KEY_HINT}`,
-      invalid_type_error: `must be a string — ${KEY_HINT}`,
-    })
-    .min(1, `must not be empty — ${KEY_HINT}`),
+    .string({ invalid_type_error: `must be a string — ${KEY_HINT}` })
+    .min(1, `must not be empty — ${KEY_HINT}`)
+    .optional(),
   webhookSecret: z
     .string({ invalid_type_error: `must be a string — ${WEBHOOK_HINT}` })
     .min(1, `must not be empty — ${WEBHOOK_HINT}`)

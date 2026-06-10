@@ -165,11 +165,15 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
 
       const sessionData: MoyasarSessionData = {
         status: "pending",
-        publishable_key: this.options_.publishableKey,
         amount: halalas,
         currency: "SAR",
         session_id: sessionId,
       };
+      // Only the embedded source path needs the publishable key; the
+      // hosted-redirect default has nothing to tokenize.
+      if (this.options_.publishableKey !== undefined) {
+        sessionData.publishable_key = this.options_.publishableKey;
+      }
       if (typeof data.description === "string") {
         sessionData.description = data.description;
       }

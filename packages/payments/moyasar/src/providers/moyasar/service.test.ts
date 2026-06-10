@@ -92,6 +92,15 @@ describe("identifier and options", () => {
     expect(() => MoyasarProviderService.validateOptions(OPTIONS)).not.toThrow();
   });
 
+  it("boots on the secret key alone — the publishable key is optional", () => {
+    expect(() =>
+      MoyasarProviderService.validateOptions({ secretKey: "sk_test_only" }),
+    ).not.toThrow();
+    expect(
+      () => new MoyasarProviderService({}, { secretKey: "sk_test_only" }),
+    ).not.toThrow();
+  });
+
   it("throws at construction when options are invalid", () => {
     expect(() => new MoyasarProviderService({}, {})).toThrowError(
       /MOYASAR_SECRET_KEY/,
@@ -135,6 +144,18 @@ describe("initiatePayment", () => {
       (err) =>
         MedusaError.isMedusaError(err) && (err as Error).message.includes('SAR'),
     );
+  });
+
+  it("omits publishable_key from session data when no publishable key is configured", async () => {
+    const service = new MoyasarProviderService({}, { secretKey: "sk_test_only" });
+
+    const result = await service.initiatePayment({
+      amount: 10,
+      currency_code: "SAR",
+      data: { session_id: "payses_1" },
+    });
+
+    expect(result.data).not.toHaveProperty("publishable_key");
   });
 
   it("carries the description into session data when provided", async () => {
