@@ -102,7 +102,7 @@ Each package publishes independently to npm with its own README and changelog. *
 |---|---|---|:---:|
 | `@medusa-ksa/core` | [`packages/core`](./packages/core) | Shared loader, errors, webhook + HTTP helpers, money & types | 🚧 Beta |
 | **Payments** | | | |
-| `medusa-payment-moyasar` | [`payments/moyasar`](./packages/payments/moyasar) | Moyasar — Mada, Apple Pay, cards _(reference connector; STC Pay planned)_ | 🚧 Beta |
+| `medusa-payment-moyasar` | [`payments/moyasar`](./packages/payments/moyasar) | Moyasar — hosted redirect + Moyasar.js; Mada, cards, Apple Pay, STC Pay, Samsung Pay _(reference connector)_ | 🚧 Beta |
 | `medusa-payment-tap` | [`payments/tap`](./packages/payments/tap) | Tap Payments gateway | 📋 Planned |
 | `medusa-payment-hyperpay` | [`payments/hyperpay`](./packages/payments/hyperpay) | HyperPay gateway | 📋 Planned |
 | `medusa-payment-myfatoorah` | [`payments/myfatoorah`](./packages/payments/myfatoorah) | MyFatoorah gateway | 📋 Planned |
