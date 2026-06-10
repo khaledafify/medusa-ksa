@@ -100,7 +100,7 @@ Each package publishes independently to npm with its own README and changelog. *
 
 | Package | Folder | What it does | Status |
 |---|---|---|:---:|
-| `@medusa-ksa/core` | [`packages/core`](./packages/core) | Shared loader, errors, webhook + HTTP helpers, money & types | 📋 Planned |
+| `@medusa-ksa/core` | [`packages/core`](./packages/core) | Shared loader, errors, webhook + HTTP helpers, money & types | 🚧 Beta |
 | **Payments** | | | |
 | `medusa-payment-moyasar` | [`payments/moyasar`](./packages/payments/moyasar) | Moyasar — Mada, Apple Pay, STC Pay, cards _(reference connector)_ | 📋 Planned |
 | `medusa-payment-tap` | [`payments/tap`](./packages/payments/tap) | Tap Payments gateway | 📋 Planned |
