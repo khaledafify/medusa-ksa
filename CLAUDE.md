@@ -65,6 +65,7 @@ medusa-ksa/
 
 ### Dropped / out of scope (do not build)
 - ❌ **Storefront — any storefront-side code or data** (checkout UI, hosted-form wiring, publishable-key flows, RTL storefront). Consumers integrate these in their own app; the suite stays backend + native admin.
+- ❌ **Cryptocurrency / crypto payments** — never supported. All payments are fiat **SAR** (Mada, cards, Apple Pay, STC Pay wallet, BNPL). _Note:_ "cryptographic" / "cryptographically" in the ZATCA docs means **digital signing & hashing required by Saudi tax law** — not currency. The two are unrelated.
 - ❌ **Qoyod / Wafeq** (accounting) — not needed.
 - ❌ **Cash on Delivery package** — Medusa's built-in `system` payment provider already behaves like COD. Don't build one.
 - ❌ **VAT calculation** — handled natively by Medusa tax regions/rates (set 15%). Not a connector.

@@ -65,7 +65,7 @@ packages:
 }
 ```
 
-- `strict` + `noUncheckedIndexedAccess` are non-negotiable — they catch the class of bug that breaks money/crypto code.
+- `strict` + `noUncheckedIndexedAccess` are non-negotiable — they catch the class of bug that breaks money math and cryptographic-signing code.
 - Project references between packages so editor + `tsc -b` understand the graph.
 
 ## 4. Changesets — `.changeset/config.json`

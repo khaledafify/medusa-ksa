@@ -186,7 +186,7 @@ A native Medusa admin route at **Settings → ZATCA**, built with Medusa's admin
 
 1. Models + module wiring + fail-fast loader.
 2. `xml-builder` + `hash-chain` (validate XML offline against the ZATCA SDK before touching the network).
-3. `signer` + `qr` (the hard crypto — validate against known-good samples).
+3. `signer` + `qr` (the hard cryptography — validate against known-good samples).
 4. `fatoora-client` against **sandbox**: onboarding (CSR → CCSID → PCSID).
 5. `report-invoice` (B2C) end-to-end in sandbox.
 6. `clear-invoice` (B2B) + compensation.
