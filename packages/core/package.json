@@ -1,0 +1,62 @@
+{
+  "name": "@medusa-ksa/core",
+  "version": "0.1.0",
+  "private": false,
+  "description": "The shared safety surface for the medusa-ksa suite: boot-time config validation, error normalization, outbound HTTP, webhook verification, secret encryption, money conversion, idempotency, and sandbox detection.",
+  "license": "MIT",
+  "author": "khaledafify",
+  "bugs": "https://github.com/khaledafify/medusa-ksa/issues",
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@medusajs/framework": "^2.13.0",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "homepage": "https://github.com/khaledafify/medusa-ksa/tree/main/packages/core#readme",
+  "keywords": [
+    "core",
+    "ksa",
+    "medusa-plugin",
+    "medusa-v2",
+    "saudi"
+  ],
+  "main": "./dist/index.js",
+  "peerDependencies": {
+    "@medusajs/framework": "^2.13.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khaledafify/medusa-ksa.git",
+    "directory": "packages/core"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "type": "module",
+  "types": "./dist/index.d.ts"
+}

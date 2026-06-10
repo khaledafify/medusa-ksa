@@ -106,6 +106,10 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-member-access": "off",
       "@typescript-eslint/no-non-null-assertion": "off",
       "@typescript-eslint/no-floating-promises": "off",
+      // Test fakes (e.g. a stub fetch/sleep) legitimately stringify loose inputs
+      // and declare async signatures without awaiting — fine in fixtures.
+      "@typescript-eslint/no-base-to-string": "off",
+      "@typescript-eslint/require-await": "off",
     },
   },
 

@@ -63,6 +63,10 @@ CLAUDE.local.md
 # OpenAI Codex
 .codex/
 
+# Agent skill mirrors / agent instruction files (local dev only)
+.agents/
+AGENTS.md
+
 # Other agents (defensive)
 .windsurf/
 .windsurfrules
