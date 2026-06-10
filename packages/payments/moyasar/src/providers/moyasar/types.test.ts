@@ -47,7 +47,7 @@ describe("resolveMoyasarOptions", () => {
       MOYASAR_SECRET_KEY: "sk_test_env",
       MOYASAR_PUBLISHABLE_KEY: "pk_test_env",
       MOYASAR_WEBHOOK_SECRET: "whsec_env",
-    } as NodeJS.ProcessEnv);
+    });
 
     expect(options.secretKey).toBe("sk_test_env");
     expect(options.publishableKey).toBe("pk_test_env");
@@ -58,7 +58,7 @@ describe("resolveMoyasarOptions", () => {
     const options = resolveMoyasarOptions(VALID, {
       MOYASAR_SECRET_KEY: "sk_test_env",
       MOYASAR_PUBLISHABLE_KEY: "pk_test_env",
-    } as NodeJS.ProcessEnv);
+    });
 
     expect(options.secretKey).toBe(VALID.secretKey);
     expect(options.publishableKey).toBe(VALID.publishableKey);
