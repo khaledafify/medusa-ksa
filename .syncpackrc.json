@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/syncpack@13.0.4/dist/schema.json",
+  "semverGroups": [
+    {
+      "label": "Use caret ranges everywhere (one shared policy across the suite)",
+      "range": "^",
+      "dependencies": ["**"],
+      "dependencyTypes": ["prod", "dev", "peer"],
+      "packages": ["**"]
+    }
+  ],
+  "sortFirst": ["name", "version", "private", "description", "license", "author"],
+  "sortPackages": true
+}

@@ -1,0 +1,41 @@
+# Normalize line endings: store LF in the repo, check out native on Windows.
+* text=auto eol=lf
+
+# Explicitly mark common text formats so diffs and EOL handling stay consistent.
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.cjs       text eol=lf
+*.mjs       text eol=lf
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.xml       text eol=lf
+*.css       text eol=lf
+*.html      text eol=lf
+*.sh        text eol=lf
+*.env       text eol=lf
+.editorconfig text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+
+# Lockfile: text, but never show inline diffs (huge, machine-generated).
+pnpm-lock.yaml text eol=lf -diff linguist-generated
+
+# Binary assets: never normalize, never diff as text.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.ico       binary
+*.pdf       binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.eot       binary
+*.p12       binary
+*.pfx       binary
+*.der       binary

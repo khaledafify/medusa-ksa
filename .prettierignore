@@ -1,0 +1,13 @@
+# Build output
+.medusa
+dist
+.turbo
+
+# Dependencies
+node_modules
+
+# Generated / machine-owned files
+pnpm-lock.yaml
+CHANGELOG.md
+**/CHANGELOG.md
+coverage

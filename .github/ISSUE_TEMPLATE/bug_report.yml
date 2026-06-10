@@ -1,0 +1,111 @@
+name: Bug report
+description: Report a defect in a Medusa KSA package
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill out the fields below so we can reproduce it quickly.
+
+        **Security issue?** Do **not** file it here — follow our [Security Policy](https://github.com/khaledafify/medusa-ksa/blob/main/SECURITY.md) and report privately.
+  - type: dropdown
+    id: package
+    attributes:
+      label: Affected package
+      description: Which package is this about? Pick the closest one.
+      options:
+        - "@medusa-ksa/core"
+        - medusa-payment-moyasar
+        - medusa-payment-tap
+        - medusa-payment-hyperpay
+        - medusa-payment-myfatoorah
+        - medusa-payment-paytabs
+        - medusa-payment-stcpay
+        - medusa-payment-tabby
+        - medusa-payment-tamara
+        - medusa-fulfillment-torod
+        - medusa-fulfillment-smsa
+        - medusa-fulfillment-aramex
+        - medusa-fulfillment-spl
+        - medusa-fulfillment-imile
+        - medusa-notification-unifonic
+        - medusa-notification-taqnyat
+        - medusa-plugin-zatca
+        - medusa-plugin-saudi-address
+        - create-medusa-ksa-app
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: package-version
+    attributes:
+      label: Package version
+      description: The version of the affected package (from your lockfile or package.json).
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: medusa-version
+    attributes:
+      label: Medusa version
+      description: Your @medusajs/medusa / @medusajs/framework version.
+      placeholder: "2.13.0"
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Output of `node --version` (must be >=20).
+      placeholder: "v20.x"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, ordered steps. A link to a minimal repro repo is ideal.
+      placeholder: |
+        1. Register the provider in medusa-config.ts as ...
+        2. Set the env var ...
+        3. Trigger ...
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: Your relevant `medusa-config.ts` provider block. **Redact all secrets** — never paste real API keys.
+      render: ts
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      description: Relevant logs or stack traces. **Redact secrets.** This will be rendered as code, no backticks needed.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I am running Node.js 20 or newer.
+          required: true
+        - label: I have searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability (those go through the Security Policy, privately).
+          required: true
+        - label: I have redacted all secrets (API keys, CSIDs, webhook signing keys) from this report.
+          required: true

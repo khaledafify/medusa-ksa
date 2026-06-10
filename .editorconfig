@@ -1,0 +1,21 @@
+# https://editorconfig.org
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Markdown uses trailing whitespace for hard line breaks; don't strip it.
+[*.md]
+trim_trailing_whitespace = false
+
+# Lockfiles and generated artifacts: leave formatting to the tools that own them.
+[pnpm-lock.yaml]
+indent_size = unset
+
+[Makefile]
+indent_style = tab
