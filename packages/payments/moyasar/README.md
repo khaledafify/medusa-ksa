@@ -130,8 +130,8 @@ After starting your server, open **Medusa Admin → Settings → Regions**, edit
 
 ## ↩️ Refunds & cancellation
 
-- **Refunds** (partial and full) go through `POST /payments/:id/refund`, driven from Medusa. A payment Moyasar already reports as fully refunded is not refunded twice.
-- **Cancel** voids a payment that is still voidable (`initiated`/`authorized`). Because Moyasar captures immediately, a captured payment cannot be cancelled — issue a refund instead.
+- **Refunds** (partial and full) go through `POST /payments/:id/refund`, driven from Medusa. **Moyasar allows one refund per payment** — after any refund (even partial) the payment's status becomes `refunded` and further refunds are rejected by Moyasar. An identical retried refund is treated as a no-op.
+- **Cancel** voids an `authorized` payment. An `initiated` payment (e.g. an abandoned 3-D Secure attempt) is not voidable at Moyasar — nothing was charged and it expires on its own, so cancel is a no-op. A captured payment cannot be cancelled — issue a refund instead.
 
 ## 🧪 Testing (sandbox)
 

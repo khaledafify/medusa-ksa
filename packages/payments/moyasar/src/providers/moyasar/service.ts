@@ -384,6 +384,10 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
           // Already terminal in the cancelled direction — idempotent no-op.
           return { data: this.mergePaymentIntoData(data, payment) };
         case "initiated":
+          // Moyasar rejects voiding `initiated` payments ("Only paid or
+          // authorized payments may be voided" — verified against the live
+          // sandbox). Nothing was charged; the abandoned attempt expires.
+          return { data: this.mergePaymentIntoData(data, payment) };
         case "authorized": {
           const voided = await this.client_.voidPayment(payment.id);
           return { data: this.mergePaymentIntoData(data, voided) };
@@ -411,7 +415,9 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
       }
 
       const payment = await this.client_.fetchPayment(data.moyasar_payment_id);
-      if (payment.status === "initiated" || payment.status === "authorized") {
+      // Only `authorized` payments are voidable; `initiated` ones expire on
+      // their own and everything else is terminal (verified in sandbox).
+      if (payment.status === "authorized") {
         const voided = await this.client_.voidPayment(payment.id);
         return { data: this.mergePaymentIntoData(data, voided) };
       }

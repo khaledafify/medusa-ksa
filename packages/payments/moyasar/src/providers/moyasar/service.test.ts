@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { MedusaError } from "@medusajs/framework/utils";
 
@@ -20,6 +20,30 @@ const OPTIONS = {
 
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+// Hermetic env: the loader falls back to MOYASAR_* env vars, so ambient shell
+// values (e.g. during a live sandbox run) must not leak into these tests.
+const ENV_KEYS = [
+  "MOYASAR_SECRET_KEY",
+  "MOYASAR_PUBLISHABLE_KEY",
+  "MOYASAR_WEBHOOK_SECRET",
+] as const;
+const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string>> = {};
+
+beforeAll(() => {
+  for (const key of ENV_KEYS) {
+    savedEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+});
+
+afterAll(() => {
+  for (const key of ENV_KEYS) {
+    if (savedEnv[key] !== undefined) {
+      process.env[key] = savedEnv[key];
+    }
+  }
+});
 
 function paidPayment(overrides: Partial<MoyasarPayment> = {}): MoyasarPayment {
   return {
@@ -555,19 +579,20 @@ describe("cancelPayment", () => {
     expect(result.data).toMatchObject({ status: "voided" });
   });
 
-  it("voids an initiated payment", async () => {
-    const voidPayment = vi.fn(async (_id: string) =>
-      paidPayment({ status: "voided" }),
-    );
+  it("treats an initiated payment as canceled without voiding (nothing was charged)", async () => {
+    // Verified against the live sandbox: Moyasar rejects voiding `initiated`
+    // payments ("Only paid or authorized payments may be voided") — an
+    // abandoned 3DS attempt simply expires.
+    const voidPayment = vi.fn();
     const fetchPayment = vi.fn(async () => paidPayment({ status: "initiated" }));
     const service = makeService({ voidPayment, fetchPayment });
 
-    await service.cancelPayment({
+    const result = await service.cancelPayment({
       data: sessionData({ moyasar_payment_id: "pay_1" }),
     });
 
-    expect(voidPayment).toHaveBeenCalledTimes(1);
-    expect(voidPayment).toHaveBeenCalledWith("pay_1");
+    expect(voidPayment).not.toHaveBeenCalled();
+    expect(result.data).toMatchObject({ status: "initiated" });
   });
 
   it("is idempotent: an already voided payment is not voided again", async () => {
@@ -626,11 +651,13 @@ describe("deletePayment", () => {
     expect(result.data).toBeDefined();
   });
 
-  it("voids a voidable payment when the session is deleted", async () => {
+  it("voids an authorized payment when the session is deleted", async () => {
     const voidPayment = vi.fn(async (_id: string) =>
       paidPayment({ status: "voided" }),
     );
-    const fetchPayment = vi.fn(async () => paidPayment({ status: "initiated" }));
+    const fetchPayment = vi.fn(async () =>
+      paidPayment({ status: "authorized" }),
+    );
     const service = makeService({ voidPayment, fetchPayment });
 
     await service.deletePayment({
@@ -639,6 +666,19 @@ describe("deletePayment", () => {
 
     expect(voidPayment).toHaveBeenCalledTimes(1);
     expect(voidPayment).toHaveBeenCalledWith("pay_1");
+  });
+
+  it("does not void an initiated payment on delete (Moyasar rejects it; it expires on its own)", async () => {
+    const voidPayment = vi.fn();
+    const fetchPayment = vi.fn(async () => paidPayment({ status: "initiated" }));
+    const service = makeService({ voidPayment, fetchPayment });
+
+    const result = await service.deletePayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(voidPayment).not.toHaveBeenCalled();
+    expect(result.data).toMatchObject({ moyasar_payment_id: "pay_1" });
   });
 
   it("does not throw when the payment reached a terminal state", async () => {
