@@ -1,5 +1,14 @@
 {
   "$schema": "https://unpkg.com/syncpack@13.0.4/dist/schema.json",
+  "versionGroups": [
+    {
+      "label": "Connectors depend on core via the workspace protocol; Changesets rewrites it to a real range on publish (docs/CONFIGURATION.md §1)",
+      "dependencies": ["@medusa-ksa/core"],
+      "dependencyTypes": ["prod"],
+      "packages": ["**"],
+      "pinVersion": "workspace:*"
+    }
+  ],
   "semverGroups": [
     {
       "label": "Use caret ranges everywhere (one shared policy across the suite)",
