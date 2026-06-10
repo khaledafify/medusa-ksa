@@ -436,3 +436,220 @@ describe("updatePayment", () => {
     expect(result.data).toMatchObject({ moyasar_payment_id: "pay_1" });
   });
 });
+
+describe("refundPayment", () => {
+  it("sends a partial refund in integer halalas", async () => {
+    const refundPayment = vi.fn(async (_id: string, _amount?: number) =>
+      paidPayment({ status: "refunded", refunded: 1_000 }),
+    );
+    const fetchPayment = vi.fn(async () => paidPayment());
+    const service = makeService({ refundPayment, fetchPayment });
+
+    const result = await service.refundPayment({
+      amount: 10,
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(refundPayment).toHaveBeenCalledTimes(1);
+    expect(refundPayment).toHaveBeenCalledWith("pay_1", 1_000);
+    expect(result.data).toMatchObject({
+      moyasar_payment_id: "pay_1",
+      status: "refunded",
+    });
+  });
+
+  it("sends a full refund", async () => {
+    const refundPayment = vi.fn(async (_id: string, _amount?: number) =>
+      paidPayment({ status: "refunded", refunded: 4_999 }),
+    );
+    const fetchPayment = vi.fn(async () => paidPayment());
+    const service = makeService({ refundPayment, fetchPayment });
+
+    await service.refundPayment({
+      amount: 49.99,
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(refundPayment).toHaveBeenCalledTimes(1);
+    expect(refundPayment).toHaveBeenCalledWith("pay_1", 4_999);
+  });
+
+  it("is idempotent: a fully refunded payment is not refunded again", async () => {
+    const refundPayment = vi.fn();
+    const fetchPayment = vi.fn(async () =>
+      paidPayment({ status: "refunded", refunded: 4_999 }),
+    );
+    const service = makeService({ refundPayment, fetchPayment });
+
+    const result = await service.refundPayment({
+      amount: 49.99,
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(refundPayment).not.toHaveBeenCalled();
+    expect(result.data).toMatchObject({ status: "refunded" });
+  });
+
+  it("collapses concurrent identical refunds into one API call", async () => {
+    const refundPayment = vi.fn(async (_id: string, _amount?: number) =>
+      paidPayment({ status: "refunded", refunded: 1_000 }),
+    );
+    const fetchPayment = vi.fn(async () => paidPayment());
+    const service = makeService({ refundPayment, fetchPayment });
+    const input = {
+      amount: 10,
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    };
+
+    await Promise.all([
+      service.refundPayment(input),
+      service.refundPayment(input),
+    ]);
+
+    expect(refundPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects when no Moyasar payment exists for the session", async () => {
+    const service = makeService();
+
+    await expect(
+      service.refundPayment({ amount: 10, data: sessionData() }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+  });
+
+  it("never leaks the secret key when the refund fails", async () => {
+    const refundPayment = vi.fn(async (_id: string, _amount?: number) => {
+      throw new KsaError("refund failed (HTTP 400)", {
+        prefix: "moyasar",
+      });
+    });
+    const fetchPayment = vi.fn(async () => paidPayment());
+    const service = makeService({ refundPayment, fetchPayment });
+
+    await expect(
+      service.refundPayment({
+        amount: 10,
+        data: sessionData({ moyasar_payment_id: "pay_1" }),
+      }),
+    ).rejects.toSatisfy(
+      (err) => !(err as Error).message.includes(OPTIONS.secretKey),
+    );
+  });
+});
+
+describe("cancelPayment", () => {
+  it("voids an authorized payment", async () => {
+    const voidPayment = vi.fn(async (_id: string) =>
+      paidPayment({ status: "voided" }),
+    );
+    const fetchPayment = vi.fn(async () => paidPayment({ status: "authorized" }));
+    const service = makeService({ voidPayment, fetchPayment });
+
+    const result = await service.cancelPayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(voidPayment).toHaveBeenCalledTimes(1);
+    expect(voidPayment).toHaveBeenCalledWith("pay_1");
+    expect(result.data).toMatchObject({ status: "voided" });
+  });
+
+  it("voids an initiated payment", async () => {
+    const voidPayment = vi.fn(async (_id: string) =>
+      paidPayment({ status: "voided" }),
+    );
+    const fetchPayment = vi.fn(async () => paidPayment({ status: "initiated" }));
+    const service = makeService({ voidPayment, fetchPayment });
+
+    await service.cancelPayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(voidPayment).toHaveBeenCalledTimes(1);
+    expect(voidPayment).toHaveBeenCalledWith("pay_1");
+  });
+
+  it("is idempotent: an already voided payment is not voided again", async () => {
+    const voidPayment = vi.fn();
+    const fetchPayment = vi.fn(async () => paidPayment({ status: "voided" }));
+    const service = makeService({ voidPayment, fetchPayment });
+
+    const result = await service.cancelPayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(voidPayment).not.toHaveBeenCalled();
+    expect(result.data).toMatchObject({ status: "voided" });
+  });
+
+  it("is a no-op while no Moyasar payment exists", async () => {
+    const voidPayment = vi.fn();
+    const fetchPayment = vi.fn();
+    const service = makeService({ voidPayment, fetchPayment });
+
+    const result = await service.cancelPayment({ data: sessionData() });
+
+    expect(voidPayment).not.toHaveBeenCalled();
+    expect(fetchPayment).not.toHaveBeenCalled();
+    expect(result.data).toBeDefined();
+  });
+
+  it("rejects cancelling a captured payment and points at refunds", async () => {
+    const voidPayment = vi.fn();
+    const fetchPayment = vi.fn(async () => paidPayment());
+    const service = makeService({ voidPayment, fetchPayment });
+
+    await expect(
+      service.cancelPayment({
+        data: sessionData({ moyasar_payment_id: "pay_1" }),
+      }),
+    ).rejects.toSatisfy(
+      (err) =>
+        MedusaError.isMedusaError(err) &&
+        (err as Error).message.includes("refund"),
+    );
+    expect(voidPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("deletePayment", () => {
+  it("is a no-op while no Moyasar payment exists", async () => {
+    const voidPayment = vi.fn();
+    const fetchPayment = vi.fn();
+    const service = makeService({ voidPayment, fetchPayment });
+
+    const result = await service.deletePayment({ data: sessionData() });
+
+    expect(voidPayment).not.toHaveBeenCalled();
+    expect(fetchPayment).not.toHaveBeenCalled();
+    expect(result.data).toBeDefined();
+  });
+
+  it("voids a voidable payment when the session is deleted", async () => {
+    const voidPayment = vi.fn(async (_id: string) =>
+      paidPayment({ status: "voided" }),
+    );
+    const fetchPayment = vi.fn(async () => paidPayment({ status: "initiated" }));
+    const service = makeService({ voidPayment, fetchPayment });
+
+    await service.deletePayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(voidPayment).toHaveBeenCalledTimes(1);
+    expect(voidPayment).toHaveBeenCalledWith("pay_1");
+  });
+
+  it("does not throw when the payment reached a terminal state", async () => {
+    const voidPayment = vi.fn();
+    const fetchPayment = vi.fn(async () => paidPayment());
+    const service = makeService({ voidPayment, fetchPayment });
+
+    const result = await service.deletePayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(voidPayment).not.toHaveBeenCalled();
+    expect(result.data).toMatchObject({ moyasar_payment_id: "pay_1" });
+  });
+});

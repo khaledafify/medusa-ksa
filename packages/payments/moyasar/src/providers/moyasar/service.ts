@@ -332,37 +332,90 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
     }
   }
 
-  async refundPayment(_input: RefundPaymentInput): Promise<RefundPaymentOutput> {
-    return Promise.reject(
-      toMedusaError(
-        new KsaError("refundPayment is not implemented yet.", {
-          prefix: MOYASAR_PREFIX,
-          code: KsaErrorCodes.UNEXPECTED,
-        }),
-      ),
-    );
+  /**
+   * `POST /payments/:id/refund` with the halalas amount (partial + full).
+   * A payment Moyasar already reports as fully refunded is returned as-is, so
+   * a redelivered refund instruction cannot double-refund; concurrent
+   * identical refunds collapse into one API call via core's `withIdempotency`.
+   */
+  async refundPayment(input: RefundPaymentInput): Promise<RefundPaymentOutput> {
+    try {
+      const data = (input.data ?? {}) as MoyasarSessionData;
+      const id = this.requirePaymentId(data, "refund");
+      const halalas = sarToHalalas(bigNumberToNumber(input.amount));
+
+      const payment = await this.client_.fetchPayment(id);
+      if (payment.status === "refunded" && (payment.refunded ?? 0) >= halalas) {
+        return { data: this.mergePaymentIntoData(data, payment) };
+      }
+
+      const refunded = await withIdempotency(
+        `moyasar:refund:${id}:${halalas}`,
+        () => this.client_.refundPayment(id, halalas),
+      );
+
+      return { data: this.mergePaymentIntoData(data, refunded) };
+    } catch (err) {
+      throw toMedusaError(err);
+    }
   }
 
-  async cancelPayment(_input: CancelPaymentInput): Promise<CancelPaymentOutput> {
-    return Promise.reject(
-      toMedusaError(
-        new KsaError("cancelPayment is not implemented yet.", {
-          prefix: MOYASAR_PREFIX,
-          code: KsaErrorCodes.UNEXPECTED,
-        }),
-      ),
-    );
+  /**
+   * `POST /payments/:id/void` while the payment is still voidable
+   * (`initiated` / `authorized`). Captured money cannot be voided — Moyasar
+   * captures immediately — so a captured payment must be refunded instead.
+   */
+  async cancelPayment(input: CancelPaymentInput): Promise<CancelPaymentOutput> {
+    try {
+      const data = (input.data ?? {}) as MoyasarSessionData;
+      if (typeof data.moyasar_payment_id !== "string") {
+        // Nothing was charged — cancelling the session needs no provider call.
+        return { data: { ...data } };
+      }
+
+      const payment = await this.client_.fetchPayment(data.moyasar_payment_id);
+      switch (payment.status) {
+        case "voided":
+        case "failed":
+          // Already terminal in the cancelled direction — idempotent no-op.
+          return { data: this.mergePaymentIntoData(data, payment) };
+        case "initiated":
+        case "authorized": {
+          const voided = await this.client_.voidPayment(payment.id);
+          return { data: this.mergePaymentIntoData(data, voided) };
+        }
+        default:
+          throw new KsaError(
+            `cannot cancel — payment ${payment.id} is "${payment.status}" and Moyasar captures immediately. Issue a refund instead.`,
+            { prefix: MOYASAR_PREFIX, code: KsaErrorCodes.PROVIDER_ERROR },
+          );
+      }
+    } catch (err) {
+      throw toMedusaError(err);
+    }
   }
 
-  async deletePayment(_input: DeletePaymentInput): Promise<DeletePaymentOutput> {
-    return Promise.reject(
-      toMedusaError(
-        new KsaError("deletePayment is not implemented yet.", {
-          prefix: MOYASAR_PREFIX,
-          code: KsaErrorCodes.UNEXPECTED,
-        }),
-      ),
-    );
+  /**
+   * Session cleanup: voids a still-voidable payment but never fails the
+   * caller's flow over a payment that already reached a terminal state.
+   */
+  async deletePayment(input: DeletePaymentInput): Promise<DeletePaymentOutput> {
+    try {
+      const data = (input.data ?? {}) as MoyasarSessionData;
+      if (typeof data.moyasar_payment_id !== "string") {
+        return { data: { ...data } };
+      }
+
+      const payment = await this.client_.fetchPayment(data.moyasar_payment_id);
+      if (payment.status === "initiated" || payment.status === "authorized") {
+        const voided = await this.client_.voidPayment(payment.id);
+        return { data: this.mergePaymentIntoData(data, voided) };
+      }
+
+      return { data: this.mergePaymentIntoData(data, payment) };
+    } catch (err) {
+      throw toMedusaError(err);
+    }
   }
 
   async getWebhookActionAndData(
