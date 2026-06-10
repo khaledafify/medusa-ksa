@@ -10,6 +10,7 @@ import type {
   MoyasarCreatePaymentRequest,
   MoyasarPayment,
   MoyasarSessionData,
+  MoyasarWebhookEvent,
 } from "./types.js";
 
 const OPTIONS = {
@@ -651,5 +652,192 @@ describe("deletePayment", () => {
 
     expect(voidPayment).not.toHaveBeenCalled();
     expect(result.data).toMatchObject({ moyasar_payment_id: "pay_1" });
+  });
+});
+
+describe("getWebhookActionAndData", () => {
+  const WEBHOOK_SECRET = "whtok_test_1";
+
+  function webhookEvent(
+    overrides: Partial<MoyasarWebhookEvent> = {},
+  ): MoyasarWebhookEvent {
+    return {
+      id: "evt_1",
+      type: "payment_paid",
+      secret_token: WEBHOOK_SECRET,
+      data: paidPayment(),
+      ...overrides,
+    };
+  }
+
+  function makeWebhookService(
+    client: Partial<MoyasarClient>,
+    extraOptions: Record<string, unknown> = { webhookSecret: WEBHOOK_SECRET },
+  ): MoyasarProviderService {
+    const service = new MoyasarProviderService(
+      {},
+      { ...OPTIONS, ...extraOptions },
+    );
+    Reflect.set(service, "client_", client);
+    return service;
+  }
+
+  function payloadFor(event: MoyasarWebhookEvent) {
+    return {
+      data: event as unknown as Record<string, unknown>,
+      rawData: JSON.stringify(event),
+      headers: {},
+    };
+  }
+
+  it("maps a verified payment_paid event to captured using the API-fetched state", async () => {
+    const fetchPayment = vi.fn(async (_id: string) => paidPayment());
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(webhookEvent()),
+    );
+
+    expect(fetchPayment).toHaveBeenCalledTimes(1);
+    expect(fetchPayment).toHaveBeenCalledWith("pay_1");
+    expect(result.action).toBe("captured");
+    expect(result.data).toMatchObject({ session_id: "payses_1", amount: 49.99 });
+  });
+
+  it("maps payment_failed to failed", async () => {
+    const fetchPayment = vi.fn(async (_id: string) =>
+      paidPayment({ status: "failed" }),
+    );
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(
+        webhookEvent({ type: "payment_failed", data: paidPayment({ status: "failed" }) }),
+      ),
+    );
+
+    expect(result.action).toBe("failed");
+  });
+
+  it("trusts the API, not the payload: a tampered paid event on a failed payment maps to failed", async () => {
+    // Event body claims "paid" but Moyasar's API says the payment failed.
+    const fetchPayment = vi.fn(async (_id: string) =>
+      paidPayment({ status: "failed" }),
+    );
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(webhookEvent()),
+    );
+
+    expect(result.action).toBe("failed");
+  });
+
+  it("rejects a wrong secret token without calling the API", async () => {
+    const fetchPayment = vi.fn();
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(webhookEvent({ secret_token: "whtok_wrong" })),
+    );
+
+    expect(fetchPayment).not.toHaveBeenCalled();
+    expect(result.action).toBe("not_supported");
+  });
+
+  it("rejects a missing secret token when a webhook secret is configured", async () => {
+    const fetchPayment = vi.fn();
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(webhookEvent({ secret_token: undefined })),
+    );
+
+    expect(fetchPayment).not.toHaveBeenCalled();
+    expect(result.action).toBe("not_supported");
+  });
+
+  it("still verifies against the API when no webhook secret is configured", async () => {
+    const fetchPayment = vi.fn(async (_id: string) => paidPayment());
+    const service = makeWebhookService({ fetchPayment }, {});
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(webhookEvent({ secret_token: undefined })),
+    );
+
+    expect(fetchPayment).toHaveBeenCalledTimes(1);
+    expect(result.action).toBe("captured");
+  });
+
+  it("is idempotent under redelivery: replaying payment_paid yields the same captured action", async () => {
+    const fetchPayment = vi.fn(async (_id: string) => paidPayment());
+    const service = makeWebhookService({ fetchPayment });
+    const payload = payloadFor(webhookEvent());
+
+    const first = await service.getWebhookActionAndData(payload);
+    const second = await service.getWebhookActionAndData(payload);
+
+    expect(first).toEqual(second);
+    expect(second.action).toBe("captured");
+  });
+
+  it("returns not_supported for refund events (Medusa drives refunds itself)", async () => {
+    const fetchPayment = vi.fn();
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(
+        webhookEvent({
+          type: "payment_refunded",
+          data: paidPayment({ status: "refunded", refunded: 4_999 }),
+        }),
+      ),
+    );
+
+    expect(fetchPayment).not.toHaveBeenCalled();
+    expect(result.action).toBe("not_supported");
+  });
+
+  it("returns not_supported for a malformed payload", async () => {
+    const fetchPayment = vi.fn();
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData({
+      data: { nonsense: true },
+      rawData: "{}",
+      headers: {},
+    });
+
+    expect(fetchPayment).not.toHaveBeenCalled();
+    expect(result.action).toBe("not_supported");
+  });
+
+  it("returns not_supported when the payment carries no session_id metadata", async () => {
+    const orphan = paidPayment({ metadata: {} });
+    const fetchPayment = vi.fn(async (_id: string) => orphan);
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(webhookEvent({ data: orphan })),
+    );
+
+    expect(result.action).toBe("not_supported");
+  });
+
+  it("never leaks the secret key or webhook secret when the verify fetch fails", async () => {
+    const fetchPayment = vi.fn(async (_id: string) => {
+      throw new KsaError("fetch failed (HTTP 500)", { prefix: "moyasar" });
+    });
+    const service = makeWebhookService({ fetchPayment });
+
+    await expect(
+      service.getWebhookActionAndData(payloadFor(webhookEvent())),
+    ).rejects.toSatisfy((err) => {
+      const message = (err as Error).message;
+      return (
+        !message.includes(OPTIONS.secretKey) &&
+        !message.includes(WEBHOOK_SECRET)
+      );
+    });
   });
 });

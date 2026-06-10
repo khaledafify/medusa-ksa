@@ -28,17 +28,21 @@ import {
   KsaError,
   KsaErrorCodes,
   assertSar,
+  halalasToSar,
   idempotencyKey,
   sarToHalalas,
   toMedusaError,
+  verifySecretToken,
   withIdempotency,
 } from "@medusa-ksa/core";
+import type { SarAmount } from "@medusa-ksa/core";
 
 import { MoyasarClient } from "./client.js";
 import type {
   MoyasarOptions,
   MoyasarPayment,
   MoyasarSessionData,
+  MoyasarWebhookEvent,
 } from "./types.js";
 import { MOYASAR_PREFIX, resolveMoyasarOptions } from "./types.js";
 
@@ -418,17 +422,83 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
     }
   }
 
+  /**
+   * Webhook is the source of truth for the final payment outcome (ADR-0005),
+   * but the **payload itself is never trusted**:
+   *
+   * 1. When `MOYASAR_WEBHOOK_SECRET` is configured, the payload's
+   *    `secret_token` is checked in constant time (core `verifySecretToken`);
+   *    a tampered or missing token is rejected as `not_supported` before any
+   *    API call.
+   * 2. The authoritative state is then re-fetched via `GET /payments/:id` —
+   *    the action is derived from Moyasar's answer, never from the event body,
+   *    so a forged "paid" body cannot capture anything.
+   *
+   * Redelivery is naturally idempotent: re-processing `payment_paid` on an
+   * already-captured Medusa payment is a no-op in Medusa's payment state
+   * (no dedup table, per ADR-0005).
+   */
   async getWebhookActionAndData(
-    _payload: ProviderWebhookPayload["payload"],
+    payload: ProviderWebhookPayload["payload"],
   ): Promise<WebhookActionResult> {
-    return Promise.reject(
-      toMedusaError(
-        new KsaError("getWebhookActionAndData is not implemented yet.", {
-          prefix: MOYASAR_PREFIX,
-          code: KsaErrorCodes.UNEXPECTED,
-        }),
-      ),
-    );
+    try {
+      const event = payload.data as Partial<MoyasarWebhookEvent> | undefined;
+      const paymentId = event?.data?.id;
+      if (
+        event === undefined ||
+        typeof event.type !== "string" ||
+        typeof paymentId !== "string" ||
+        paymentId === ""
+      ) {
+        return { action: "not_supported" };
+      }
+
+      if (
+        this.options_.webhookSecret !== undefined &&
+        !verifySecretToken(event.secret_token, this.options_.webhookSecret)
+      ) {
+        return { action: "not_supported" };
+      }
+
+      // Refunds are initiated by Medusa through refundPayment; the
+      // confirmation event carries nothing for Medusa to act on.
+      if (event.type === "payment_refunded") {
+        return { action: "not_supported" };
+      }
+
+      const payment = await this.client_.fetchPayment(paymentId);
+
+      const sessionId = payment.metadata?.session_id;
+      if (typeof sessionId !== "string" || sessionId === "") {
+        // Not a payment this provider created — nothing to route it to.
+        return { action: "not_supported" };
+      }
+
+      const data = {
+        session_id: sessionId,
+        amount: halalasToSar(payment.amount as SarAmount),
+      };
+
+      switch (payment.status) {
+        case "paid":
+        case "captured":
+          return { action: "captured", data };
+        case "authorized":
+          return { action: "authorized", data };
+        case "failed":
+          return { action: "failed", data };
+        case "voided":
+          return { action: "canceled", data };
+        case "initiated":
+          return { action: "pending", data };
+        default:
+          return { action: "not_supported" };
+      }
+    } catch (err) {
+      // Surface transport failures: Medusa responds non-2xx and Moyasar
+      // redelivers, so a transient outage cannot drop a paid event.
+      throw toMedusaError(err);
+    }
   }
 
   /** Session/payment data persisted back to Medusa after a provider call. */
