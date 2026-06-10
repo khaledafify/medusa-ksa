@@ -1,19 +1,7 @@
 import { KsaError, KsaErrorCodes } from "./errors.js";
+import type { RedactNeedle } from "./redact.js";
 import { redactSecrets } from "./redact.js";
-
-/**
- * Per-request shape accepted by {@link HttpClient.request}.
- *
- * `idempotent` marks a non-safe method (POST/PUT/PATCH/DELETE) as safe to
- * retry. Safe methods (GET/HEAD) are always retryable.
- */
-export interface HttpClientRequest {
-  method: string;
-  path: string;
-  body?: unknown;
-  headers?: Record<string, string>;
-  idempotent?: boolean;
-}
+import type { AuthStrategy, HttpRequest } from "./types.js";
 
 /** Retry policy. Backoff is exponential with full jitter. */
 export interface HttpClientRetry {
@@ -30,10 +18,18 @@ export interface HttpClientRetry {
 export interface HttpClientOptions {
   baseUrl: string;
   timeoutMs: number;
+  /** Authentication strategy; core builds and redacts the auth header. */
+  auth?: AuthStrategy;
   headers?: Record<string, string>;
   retry?: HttpClientRetry;
-  /** Extra secret strings to scrub from any thrown error message. */
-  redact?: string[];
+  /** Extra secret strings/patterns to scrub from any thrown error message. */
+  redact?: RedactNeedle[];
+  /**
+   * Allow `req.path` to be an absolute `http(s)://` URL, bypassing `baseUrl`.
+   * Defaults to `false`: absolute paths are rejected so a connector can never
+   * be steered to an attacker-controlled host (SSRF) by malformed input.
+   */
+  allowAbsoluteUrls?: boolean;
   /** Injectable fetch (tests). Defaults to global `fetch`. */
   fetchImpl?: typeof fetch;
   /** Injectable sleep (tests). Defaults to a real timer. */
@@ -41,6 +37,60 @@ export interface HttpClientOptions {
 }
 
 const SAFE_METHODS = new Set(["GET", "HEAD"]);
+
+/**
+ * Build the auth header for a strategy plus the secret fragments that must be
+ * scrubbed from any error message. Centralizes header assembly so no connector
+ * hand-rolls an `Authorization` value (CONTRACT.md "Outbound HTTP").
+ */
+function buildAuthHeader(auth: AuthStrategy): {
+  name: string;
+  value: string;
+  secrets: string[];
+} {
+  switch (auth.type) {
+    case "bearer": {
+      const value = `Bearer ${auth.token}`;
+      // Redact both the full header value and the bare token, since providers
+      // sometimes echo just the token back in an error body.
+      return { name: "Authorization", value, secrets: [value, auth.token] };
+    }
+    case "basic": {
+      const credentials = `${auth.username}:${auth.password}`;
+      const encoded = Buffer.from(credentials, "utf8").toString("base64");
+      const value = `Basic ${encoded}`;
+      return {
+        name: "Authorization",
+        value,
+        secrets: [value, encoded, credentials, auth.username, auth.password],
+      };
+    }
+    case "api-key": {
+      const name = auth.header ?? "Authorization";
+      return { name, value: auth.value, secrets: [auth.value] };
+    }
+  }
+}
+
+/**
+ * Serialize a query map into a URL query string, dropping `undefined` values so
+ * connectors can build params conditionally without manual filtering.
+ */
+function serializeQuery(
+  query: HttpRequest["query"],
+): string {
+  if (query === undefined) {
+    return "";
+  }
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined) {
+      continue;
+    }
+    params.append(key, String(value));
+  }
+  return params.toString();
+}
 
 /** Default real sleep — overridable for deterministic tests. */
 function defaultSleep(ms: number): Promise<void> {
@@ -64,9 +114,10 @@ export class HttpClient {
   private readonly timeoutMs: number;
   private readonly baseHeaders: Record<string, string>;
   private readonly retry: HttpClientRetry;
+  private readonly allowAbsoluteUrls: boolean;
   private readonly fetchImpl: typeof fetch;
   private readonly sleepImpl: (ms: number) => Promise<void>;
-  private readonly redactList: string[];
+  private readonly redactList: RedactNeedle[];
 
   constructor(opts: HttpClientOptions) {
     if (!opts.baseUrl) {
@@ -75,38 +126,73 @@ export class HttpClient {
         code: KsaErrorCodes.INVALID_OPTIONS,
       });
     }
-    if (typeof opts.timeoutMs !== "number" || opts.timeoutMs <= 0) {
+    if (
+      typeof opts.timeoutMs !== "number" ||
+      !Number.isFinite(opts.timeoutMs) ||
+      opts.timeoutMs <= 0
+    ) {
       throw new KsaError(
-        "HttpClient requires a positive timeoutMs — unbounded calls are not allowed.",
+        "HttpClient requires a finite, positive timeoutMs — unbounded calls are not allowed.",
         { prefix: "core", code: KsaErrorCodes.INVALID_OPTIONS },
       );
+    }
+    if (opts.retry !== undefined) {
+      const { retries, baseDelayMs } = opts.retry;
+      if (!Number.isInteger(retries) || retries < 0) {
+        throw new KsaError(
+          "HttpClient retry.retries must be a finite integer >= 0.",
+          { prefix: "core", code: KsaErrorCodes.INVALID_OPTIONS },
+        );
+      }
+      if (!Number.isFinite(baseDelayMs) || baseDelayMs < 0) {
+        throw new KsaError(
+          "HttpClient retry.baseDelayMs must be a finite number >= 0.",
+          { prefix: "core", code: KsaErrorCodes.INVALID_OPTIONS },
+        );
+      }
     }
 
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.timeoutMs = opts.timeoutMs;
-    this.baseHeaders = opts.headers ?? {};
+    this.allowAbsoluteUrls = opts.allowAbsoluteUrls ?? false;
+
+    // Assemble base headers, folding in the auth strategy's header (if any) so
+    // a connector never builds an Authorization value by hand.
+    const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+    const authSecrets: string[] = [];
+    if (opts.auth !== undefined) {
+      const { name, value, secrets } = buildAuthHeader(opts.auth);
+      headers[name] = value;
+      authSecrets.push(...secrets);
+    }
+    this.baseHeaders = headers;
     this.retry = opts.retry ?? { retries: 0, baseDelayMs: 0 };
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.sleepImpl = opts.sleepImpl ?? defaultSleep;
 
     // Secrets to scrub from error messages: explicit list + every header value
-    // (auth tokens routinely live in headers). Empty values are ignored by
-    // redactSecrets itself.
-    this.redactList = [...(opts.redact ?? []), ...Object.values(this.baseHeaders)];
+    // (auth tokens routinely live in headers) + the raw auth credential parts.
+    // Empty values are ignored by redactSecrets itself.
+    this.redactList = [
+      ...(opts.redact ?? []),
+      ...Object.values(this.baseHeaders),
+      ...authSecrets,
+    ];
   }
 
-  async request<T>(req: HttpClientRequest): Promise<T> {
+  async request<T>(req: HttpRequest): Promise<T> {
     const method = req.method.toUpperCase();
     const retryable = SAFE_METHODS.has(method) || req.idempotent === true;
     const maxAttempts = retryable ? this.retry.retries + 1 : 1;
 
     // Per-request secrets include header values supplied on this call.
-    const perRequestSecrets = [
+    const perRequestSecrets: RedactNeedle[] = [
       ...this.redactList,
       ...Object.values(req.headers ?? {}),
     ];
 
-    const url = this.buildUrl(req.path);
+    const timeoutMs = this.resolveTimeout(req.timeoutMs);
+    const url = this.buildUrl(req.path, req.query);
     const headers = this.buildHeaders(req);
     const init = this.buildInit(method, req, headers);
 
@@ -118,7 +204,7 @@ export class HttpClient {
       let response: Response | undefined;
       let transportError: unknown;
       try {
-        response = await this.fetchWithTimeout(url, init);
+        response = await this.fetchWithTimeout(url, init, timeoutMs);
       } catch (err) {
         transportError = err;
       }
@@ -129,7 +215,7 @@ export class HttpClient {
           await this.backoff(attempt, undefined);
           continue;
         }
-        throw this.toTransportError(transportError, method, req.path, perRequestSecrets);
+        throw this.toTransportError(transportError, method, req.path, perRequestSecrets, timeoutMs);
       }
 
       const res = response!;
@@ -150,14 +236,48 @@ export class HttpClient {
     }
   }
 
-  private buildUrl(path: string): string {
-    if (/^https?:\/\//i.test(path)) {
-      return path;
+  /**
+   * Resolve the effective timeout for a request, validating any per-request
+   * override (the public {@link HttpRequest} type exposes `timeoutMs`).
+   */
+  private resolveTimeout(perRequest: number | undefined): number {
+    if (perRequest === undefined) {
+      return this.timeoutMs;
     }
-    return `${this.baseUrl}/${path.replace(/^\/+/, "")}`;
+    if (
+      typeof perRequest !== "number" ||
+      !Number.isFinite(perRequest) ||
+      perRequest <= 0
+    ) {
+      throw new KsaError(
+        "Per-request timeoutMs must be a finite, positive number.",
+        { prefix: "core", code: KsaErrorCodes.INVALID_INPUT },
+      );
+    }
+    return perRequest;
   }
 
-  private buildHeaders(req: HttpClientRequest): Record<string, string> {
+  private buildUrl(path: string, query: HttpRequest["query"]): string {
+    const isAbsolute = /^https?:\/\//i.test(path);
+    if (isAbsolute && !this.allowAbsoluteUrls) {
+      throw new KsaError(
+        "Absolute URLs are not allowed; pass a path relative to baseUrl " +
+          "(set allowAbsoluteUrls to opt in).",
+        { prefix: "core", code: KsaErrorCodes.INVALID_INPUT },
+      );
+    }
+
+    const base = isAbsolute
+      ? path
+      : `${this.baseUrl}/${path.replace(/^\/+/, "")}`;
+    const qs = serializeQuery(query);
+    if (qs === "") {
+      return base;
+    }
+    return base.includes("?") ? `${base}&${qs}` : `${base}?${qs}`;
+  }
+
+  private buildHeaders(req: HttpRequest): Record<string, string> {
     const headers: Record<string, string> = {
       ...this.baseHeaders,
       ...(req.headers ?? {}),
@@ -170,7 +290,7 @@ export class HttpClient {
 
   private buildInit(
     method: string,
-    req: HttpClientRequest,
+    req: HttpRequest,
     headers: Record<string, string>,
   ): RequestInit {
     const init: RequestInit = { method, headers };
@@ -180,11 +300,15 @@ export class HttpClient {
     return init;
   }
 
-  private async fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  private async fetchWithTimeout(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+  ): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
-    }, this.timeoutMs);
+    }, timeoutMs);
     try {
       return await this.fetchImpl(url, { ...init, signal: controller.signal });
     } finally {
@@ -224,7 +348,7 @@ export class HttpClient {
     res: Response,
     method: string,
     path: string,
-    secrets: string[],
+    secrets: RedactNeedle[],
   ): Promise<T> {
     const text = await res.text();
     if (text === "") {
@@ -247,13 +371,14 @@ export class HttpClient {
     err: unknown,
     method: string,
     path: string,
-    secrets: string[],
+    secrets: RedactNeedle[],
+    timeoutMs: number,
   ): KsaError {
     const aborted =
       err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
     const detail = err instanceof Error ? err.message : String(err);
     const message = aborted
-      ? `${method} ${path} timed out after ${this.timeoutMs}ms.`
+      ? `${method} ${path} timed out after ${timeoutMs}ms.`
       : `${method} ${path} failed before a response was received: ${detail}`;
     return new KsaError(redactSecrets(message, secrets), {
       prefix: "core",
@@ -266,7 +391,7 @@ export class HttpClient {
     res: Response,
     method: string,
     path: string,
-    secrets: string[],
+    secrets: RedactNeedle[],
   ): Promise<KsaError> {
     let bodySnippet = "";
     try {

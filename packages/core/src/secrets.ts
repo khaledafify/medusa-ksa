@@ -33,10 +33,6 @@ const TAG_BYTES = 16;
 
 const ALGORITHM = "aes-256-gcm";
 
-/** Stable, suite-internal error codes specific to this module. */
-const MALFORMED_CIPHERTEXT = "malformed_ciphertext";
-const DECRYPT_FAILED = "decrypt_failed";
-
 /**
  * Copy a byte view into a `Uint8Array` that is unambiguously backed by a plain
  * `ArrayBuffer`.
@@ -121,7 +117,7 @@ export function decrypt(payload: string, key: Buffer | string): string {
   if (data.length < IV_BYTES + TAG_BYTES) {
     throw new KsaError(
       "encrypted payload is too short to contain iv and auth tag",
-      { prefix: PREFIX, code: MALFORMED_CIPHERTEXT },
+      { prefix: PREFIX, code: KsaErrorCodes.DECRYPTION_FAILED },
     );
   }
 
@@ -143,7 +139,14 @@ export function decrypt(payload: string, key: Buffer | string): string {
     // payload or key in the message.
     throw new KsaError(
       "failed to decrypt payload: wrong key or tampered data",
-      { prefix: PREFIX, code: DECRYPT_FAILED, cause },
+      { prefix: PREFIX, code: KsaErrorCodes.DECRYPTION_FAILED, cause },
     );
   }
 }
+
+/**
+ * Namespace mirror of the secret primitives, matching the
+ * `secrets.encrypt` / `secrets.decrypt` surface in CONTRACT.md. The bare
+ * {@link encrypt} / {@link decrypt} named exports remain available.
+ */
+export const secrets = { encrypt, decrypt } as const;

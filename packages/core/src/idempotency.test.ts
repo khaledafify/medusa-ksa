@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { KsaError } from "./errors.js";
 import { idempotencyKey, withIdempotency } from "./idempotency.js";
 
 describe("idempotencyKey", () => {
@@ -47,8 +48,12 @@ describe("withIdempotency", () => {
     expect(results).toEqual([42, 42, 42]);
   });
 
-  it("does not re-run fn for a settled key (result is sticky)", async () => {
-    const key = `sticky_${idempotencyKey()}`;
+  it("de-dupes only in-flight work, releasing the key once settled", async () => {
+    // In-flight-only semantics: the registry must NOT cache settled successes
+    // forever (that would grow unbounded). Once an operation settles, a later
+    // call with the same key runs fn again — durable de-duplication is the
+    // provider idempotency key's job, not this in-process collapse.
+    const key = `inflight_${idempotencyKey()}`;
     const fn = vi.fn(async () => "captured");
 
     const first = await withIdempotency(key, fn);
@@ -56,7 +61,38 @@ describe("withIdempotency", () => {
 
     expect(first).toBe("captured");
     expect(second).toBe("captured");
+    // Two SEQUENTIAL (already-settled) calls => fn runs twice.
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("collapses concurrent callers but re-runs after they settle", async () => {
+    const key = `bounded_${idempotencyKey()}`;
+    let resolveFn!: (value: string) => void;
+    const gate = new Promise<string>((resolve) => {
+      resolveFn = resolve;
+    });
+    const fn = vi
+      .fn<() => Promise<string>>()
+      .mockImplementationOnce(() => gate)
+      .mockResolvedValue("second");
+
+    // Two concurrent callers share one execution while in flight.
+    const a = withIdempotency(key, fn);
+    const b = withIdempotency(key, fn);
+    resolveFn("first");
+    expect(await a).toBe("first");
+    expect(await b).toBe("first");
     expect(fn).toHaveBeenCalledTimes(1);
+
+    // After settling, the key is free again — a fresh call re-runs fn.
+    expect(await withIdempotency(key, fn)).toBe("second");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects an empty key", async () => {
+    await expect(withIdempotency("", async () => "x")).rejects.toBeInstanceOf(KsaError);
+    const err = await withIdempotency("", async () => "x").catch((e: unknown) => e);
+    expect((err as KsaError).code).toBe("invalid_input");
   });
 
   it("treats different keys independently", async () => {

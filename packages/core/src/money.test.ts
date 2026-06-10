@@ -67,6 +67,33 @@ describe("sarToHalalas", () => {
       expect((err as KsaError).code).toBe("invalid_amount");
     }
   });
+
+  it("rejects SAR amounts that convert beyond the safe integer range", () => {
+    // MAX_SAFE_INTEGER halalas is the largest exactly-representable amount; one
+    // SAR past it rounds to an unsafe integer and must be refused.
+    const justTooBig = Number.MAX_SAFE_INTEGER / 100 + 1;
+    expect(() => sarToHalalas(justTooBig)).toThrow(KsaError);
+    try {
+      sarToHalalas(justTooBig);
+    } catch (err) {
+      expect((err as KsaError).code).toBe("invalid_amount");
+    }
+  });
+
+  it("accepts a large amount that still lands on a safe integer", () => {
+    // ~9.007e13 SAR scales to ~9.007e15 halalas, just under MAX_SAFE_INTEGER —
+    // proving the guard is inclusive on the safe side, not blanket-rejecting big values.
+    const safeSar = 90_071_992_547_409;
+    const result = sarToHalalas(safeSar);
+    expect(Number.isSafeInteger(result)).toBe(true);
+    expect(result).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("only ever returns safe integers", () => {
+    for (const sar of [0, 0.01, 1.005, 49.99, 123.456, 1_000_000, 9_999_999.99]) {
+      expect(Number.isSafeInteger(sarToHalalas(sar))).toBe(true);
+    }
+  });
 });
 
 describe("halalasToSar", () => {

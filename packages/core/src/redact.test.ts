@@ -68,6 +68,29 @@ describe("redactSecrets", () => {
     expect(redactSecrets("plain text", [])).toBe("plain text");
   });
 
+  it("redacts every match of a RegExp needle globally", () => {
+    const out = redactSecrets(
+      "a=sk_live_AAA b=sk_live_BBB c=keep",
+      [/sk_live_\w+/],
+    );
+    expect(out).toBe("a=*** b=*** c=keep");
+  });
+
+  it("adds the global flag to a non-global RegExp needle", () => {
+    // A needle without the `g` flag must still mask EVERY occurrence, not just
+    // the first — otherwise a repeated secret would leak.
+    const out = redactSecrets("tok TOKEN_1 then TOKEN_2", [/TOKEN_\d/]);
+    expect(out).toBe("tok *** then ***");
+  });
+
+  it("applies string and RegExp needles together", () => {
+    const out = redactSecrets(
+      "key=literal-secret bearer=sk_live_XYZ",
+      ["literal-secret", /sk_live_\w+/],
+    );
+    expect(out).toBe("key=*** bearer=***");
+  });
+
   it("leaves no secret fragment behind after redaction", () => {
     const secrets = ["sk_test_DEADBEEF", "bearer-TOKEN-99"];
     const out = redactSecrets(

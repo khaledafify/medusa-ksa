@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { HttpClient } from "./http-client.js";
 import { KsaError, KsaErrorCodes } from "./errors.js";
+import type { HttpRequest } from "./types.js";
 
 /** Build a JSON Response with sane defaults. */
 function jsonResponse(
@@ -300,5 +301,300 @@ describe("HttpClient", () => {
     expect(call?.init?.body).toBe(JSON.stringify({ a: 1 }));
     const headers = call?.init?.headers as Record<string, string>;
     expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  // --- Constructor validation ----------------------------------------------
+
+  describe("constructor validation", () => {
+    it("rejects timeoutMs of 0, negative, NaN, and Infinity", () => {
+      for (const timeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(
+          () => new HttpClient({ baseUrl: "https://x.test", timeoutMs }),
+        ).toThrowError(KsaError);
+      }
+    });
+
+    it("rejects a non-integer, negative, or infinite retry count", () => {
+      for (const retries of [1.5, -1, Number.POSITIVE_INFINITY, Number.NaN]) {
+        expect(
+          () =>
+            new HttpClient({
+              baseUrl: "https://x.test",
+              timeoutMs: 1000,
+              retry: { retries, baseDelayMs: 10 },
+            }),
+        ).toThrowError(KsaError);
+      }
+    });
+
+    it("rejects a negative or infinite base delay", () => {
+      for (const baseDelayMs of [-1, Number.POSITIVE_INFINITY, Number.NaN]) {
+        expect(
+          () =>
+            new HttpClient({
+              baseUrl: "https://x.test",
+              timeoutMs: 1000,
+              retry: { retries: 2, baseDelayMs },
+            }),
+        ).toThrowError(KsaError);
+      }
+    });
+
+    it("accepts a valid finite retry policy", () => {
+      expect(
+        () =>
+          new HttpClient({
+            baseUrl: "https://x.test",
+            timeoutMs: 1000,
+            retry: { retries: 0, baseDelayMs: 0 },
+          }),
+      ).not.toThrow();
+    });
+  });
+
+  // --- Absolute-URL boundary (SSRF) ----------------------------------------
+
+  it("rejects an absolute URL path by default", async () => {
+    const fetchImpl = fakeFetch([jsonResponse({ ok: true })]);
+    const client = new HttpClient({ ...baseOpts, fetchImpl });
+
+    const err = (await client
+      .request({ method: "GET", path: "https://evil.test/steal" })
+      .catch((e: unknown) => e)) as KsaError;
+
+    expect(err).toBeInstanceOf(KsaError);
+    expect(err.code).toBe(KsaErrorCodes.INVALID_INPUT);
+    // The attacker host must never have been contacted.
+    expect((fetchImpl as unknown as { calls: unknown[] }).calls).toHaveLength(0);
+  });
+
+  it("allows an absolute URL only when explicitly opted in", async () => {
+    const fetchImpl = fakeFetch([jsonResponse({ ok: true })]) as typeof fetch & {
+      calls: { url: string }[];
+    };
+    const client = new HttpClient({
+      ...baseOpts,
+      fetchImpl,
+      allowAbsoluteUrls: true,
+    });
+
+    await client.request({ method: "GET", path: "https://other.test/ok" });
+    expect(
+      (fetchImpl as unknown as { calls: { url: string }[] }).calls[0]?.url,
+    ).toBe("https://other.test/ok");
+  });
+
+  // --- Auth strategies ------------------------------------------------------
+
+  it("sets a Bearer header and redacts both the header value and bare token", async () => {
+    const token = "sk_live_bearer_secret_123";
+    const fetchImpl = fakeFetch([
+      // Body echoes the RAW token (not the full header) to prove substring redaction.
+      jsonResponse(`upstream said token=${token} is bad`, { status: 500 }),
+    ]) as typeof fetch & { calls: { url: string; init?: RequestInit }[] };
+    const client = new HttpClient({
+      ...baseOpts,
+      fetchImpl,
+      auth: { type: "bearer", token },
+    });
+
+    const err = (await client
+      .request({ method: "GET", path: "/secure" })
+      .catch((e: unknown) => e)) as KsaError;
+
+    const sentHeaders = (fetchImpl as unknown as {
+      calls: { init?: RequestInit }[];
+    }).calls[0]?.init?.headers as Record<string, string>;
+    expect(sentHeaders.Authorization).toBe(`Bearer ${token}`);
+    expect(err.message).not.toContain(token);
+    expect(err.message).not.toContain(`Bearer ${token}`);
+    expect(err.message).toContain("***");
+  });
+
+  it("sets a Basic header and redacts the username and password", async () => {
+    const username = "merchant_acct_88";
+    const password = "p@ss-w0rd-very-secret";
+    const encoded = Buffer.from(`${username}:${password}`, "utf8").toString("base64");
+    const fetchImpl = fakeFetch([
+      jsonResponse(`rejected creds ${username} / ${password}`, { status: 401 }),
+    ]) as typeof fetch & { calls: { init?: RequestInit }[] };
+    const client = new HttpClient({
+      ...baseOpts,
+      fetchImpl,
+      auth: { type: "basic", username, password },
+    });
+
+    const err = (await client
+      .request({ method: "GET", path: "/secure" })
+      .catch((e: unknown) => e)) as KsaError;
+
+    const sentHeaders = (fetchImpl as unknown as {
+      calls: { init?: RequestInit }[];
+    }).calls[0]?.init?.headers as Record<string, string>;
+    expect(sentHeaders.Authorization).toBe(`Basic ${encoded}`);
+    expect(err.message).not.toContain(username);
+    expect(err.message).not.toContain(password);
+    expect(err.message).not.toContain(encoded);
+  });
+
+  it("sets a custom api-key header and redacts the key value", async () => {
+    const apiKey = "key_live_abcdef123456";
+    const fetchImpl = fakeFetch([
+      jsonResponse(`bad key ${apiKey}`, { status: 403 }),
+    ]) as typeof fetch & { calls: { init?: RequestInit }[] };
+    const client = new HttpClient({
+      ...baseOpts,
+      fetchImpl,
+      auth: { type: "api-key", header: "x-api-key", value: apiKey },
+    });
+
+    const err = (await client
+      .request({ method: "GET", path: "/secure" })
+      .catch((e: unknown) => e)) as KsaError;
+
+    const sentHeaders = (fetchImpl as unknown as {
+      calls: { init?: RequestInit }[];
+    }).calls[0]?.init?.headers as Record<string, string>;
+    expect(sentHeaders["x-api-key"]).toBe(apiKey);
+    expect(sentHeaders.Authorization).toBeUndefined();
+    expect(err.message).not.toContain(apiKey);
+  });
+
+  it("defaults the api-key header to Authorization when none is given", async () => {
+    const apiKey = "key_default_header";
+    const fetchImpl = fakeFetch([jsonResponse({ ok: true })]) as typeof fetch & {
+      calls: { init?: RequestInit }[];
+    };
+    const client = new HttpClient({
+      ...baseOpts,
+      fetchImpl,
+      auth: { type: "api-key", value: apiKey },
+    });
+
+    await client.request({ method: "GET", path: "/secure" });
+    const sentHeaders = (fetchImpl as unknown as {
+      calls: { init?: RequestInit }[];
+    }).calls[0]?.init?.headers as Record<string, string>;
+    expect(sentHeaders.Authorization).toBe(apiKey);
+  });
+
+  // --- Query serialization --------------------------------------------------
+
+  it("appends query params and drops undefined values", async () => {
+    const fetchImpl = fakeFetch([jsonResponse({ ok: true })]) as typeof fetch & {
+      calls: { url: string }[];
+    };
+    const client = new HttpClient({ ...baseOpts, fetchImpl });
+
+    await client.request({
+      method: "GET",
+      path: "/search",
+      query: { q: "shoes", page: 2, inStock: true, color: undefined },
+    });
+
+    const url = (fetchImpl as unknown as { calls: { url: string }[] }).calls[0]?.url ?? "";
+    expect(url).toContain("/search?");
+    expect(url).toContain("q=shoes");
+    expect(url).toContain("page=2");
+    expect(url).toContain("inStock=true");
+    expect(url).not.toContain("color");
+  });
+
+  it("merges query params onto a path that already has a query string", async () => {
+    const fetchImpl = fakeFetch([jsonResponse({ ok: true })]) as typeof fetch & {
+      calls: { url: string }[];
+    };
+    const client = new HttpClient({ ...baseOpts, fetchImpl });
+
+    await client.request({ method: "GET", path: "/search?existing=1", query: { extra: "2" } });
+
+    const url = (fetchImpl as unknown as { calls: { url: string }[] }).calls[0]?.url ?? "";
+    expect(url).toContain("existing=1");
+    expect(url).toContain("&extra=2");
+  });
+
+  // --- Per-request timeout override ----------------------------------------
+
+  it("honors a per-request timeoutMs override", async () => {
+    const fetchImpl = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      // Hang until aborted so the timeout is what ends the call.
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const e = new Error("aborted");
+          e.name = "AbortError";
+          reject(e);
+        });
+      });
+    }) as typeof fetch;
+
+    // Client default is large; the per-request override is tiny.
+    const client = new HttpClient({
+      baseUrl: "https://api.example.test",
+      timeoutMs: 60_000,
+      sleepImpl: noSleep,
+      fetchImpl,
+    });
+
+    const err = (await client
+      .request({ method: "GET", path: "/slow", timeoutMs: 5 })
+      .catch((e: unknown) => e)) as KsaError;
+
+    expect(err).toBeInstanceOf(KsaError);
+    // The message reflects the per-request override, not the 60s default.
+    expect(err.message).toContain("timed out after 5ms");
+  });
+
+  it("rejects an invalid per-request timeoutMs", async () => {
+    const fetchImpl = fakeFetch([jsonResponse({ ok: true })]);
+    const client = new HttpClient({ ...baseOpts, fetchImpl });
+
+    const err = (await client
+      .request({ method: "GET", path: "/x", timeoutMs: -5 })
+      .catch((e: unknown) => e)) as KsaError;
+    expect(err).toBeInstanceOf(KsaError);
+    expect(err.code).toBe(KsaErrorCodes.INVALID_INPUT);
+  });
+
+  // --- RegExp redaction -----------------------------------------------------
+
+  it("redacts secrets matched by a RegExp needle", async () => {
+    const fetchImpl = fakeFetch([
+      jsonResponse(`leak sk_live_DEADBEEF42 here`, { status: 500 }),
+    ]);
+    const client = new HttpClient({
+      ...baseOpts,
+      fetchImpl,
+      redact: [/sk_live_\w+/],
+    });
+
+    const err = (await client
+      .request({ method: "GET", path: "/leak" })
+      .catch((e: unknown) => e)) as KsaError;
+
+    expect(err.message).not.toContain("sk_live_DEADBEEF42");
+    expect(err.message).toContain("***");
+  });
+
+  // --- Exported HttpRequest shape ------------------------------------------
+
+  it("accepts the exported HttpRequest shape with all documented fields", async () => {
+    const fetchImpl = fakeFetch([jsonResponse({ ok: true })]) as typeof fetch & {
+      calls: { url: string; init?: RequestInit }[];
+    };
+    const client = new HttpClient({ ...baseOpts, fetchImpl });
+
+    // This object is typed as HttpRequest via the request() signature; if the
+    // accepted shape and the exported type drifted, this would not compile.
+    const req: HttpRequest = {
+      method: "POST",
+      path: "/orders",
+      body: { sku: "x" },
+      headers: { "x-trace": "abc" },
+      query: { dryRun: true },
+      idempotent: true,
+      timeoutMs: 2000,
+    };
+    const out = await client.request<{ ok: boolean }>(req);
+    expect(out).toEqual({ ok: true });
   });
 });

@@ -60,69 +60,160 @@ describe("verifyWebhook", () => {
     const now = 1_700_000_000;
     const toleranceSec = 300;
 
-    it("returns true when the timestamp is within tolerance", () => {
-      const sig = sign(BODY);
+    /** Sign the Stripe-style bound payload `${timestamp}.${body}`. */
+    function signBound(timestamp: number, body: string | Buffer, secret = SECRET): string {
+      return sign(`${timestamp}.${typeof body === "string" ? body : body.toString("utf8")}`, secret);
+    }
+
+    it("verifies a timestamp-bound signature within tolerance", () => {
+      const timestamp = now - 100;
+      const sig = signBound(timestamp, BODY);
       expect(
-        verifyWebhook(BODY, sig, SECRET, {
-          timestamp: now - 100,
+        verifyWebhook(BODY, sig, SECRET, { timestamp, toleranceSec, now })
+      ).toBe(true);
+    });
+
+    it("verifies at exactly the tolerance boundary", () => {
+      const timestamp = now - toleranceSec;
+      const sig = signBound(timestamp, BODY);
+      expect(
+        verifyWebhook(BODY, sig, SECRET, { timestamp, toleranceSec, now })
+      ).toBe(true);
+    });
+
+    it("rejects a timestamp older than the tolerance", () => {
+      const timestamp = now - (toleranceSec + 1);
+      const sig = signBound(timestamp, BODY);
+      expect(
+        verifyWebhook(BODY, sig, SECRET, { timestamp, toleranceSec, now })
+      ).toBe(false);
+    });
+
+    it("rejects a far-future timestamp outside tolerance", () => {
+      const timestamp = now + (toleranceSec + 1);
+      const sig = signBound(timestamp, BODY);
+      expect(
+        verifyWebhook(BODY, sig, SECRET, { timestamp, toleranceSec, now })
+      ).toBe(false);
+    });
+
+    it("rejects a stale request even when the bound signature is itself valid", () => {
+      const timestamp = now - 10_000;
+      const sig = signBound(timestamp, BODY);
+      expect(
+        verifyWebhook(BODY, sig, SECRET, { timestamp, toleranceSec, now })
+      ).toBe(false);
+    });
+
+    // --- Misconfiguration guard ---------------------------------------------
+
+    it("returns false when toleranceSec is supplied without a timestamp", () => {
+      // The signature itself is valid; replay protection was requested but can
+      // never be enforced, so we fail closed instead of silently skipping it.
+      const sig = sign(BODY);
+      expect(verifyWebhook(BODY, sig, SECRET, { toleranceSec, now })).toBe(false);
+    });
+
+    // --- Timestamp binding ---------------------------------------------------
+
+    it("only verifies when the timestamp is part of the signed payload", () => {
+      const timestamp = now - 50;
+      // A signature over the body ALONE must not verify once a timestamp is in
+      // play — the timestamp is bound into the HMAC input.
+      const bodyOnlySig = sign(BODY);
+      expect(
+        verifyWebhook(BODY, bodyOnlySig, SECRET, { timestamp, toleranceSec, now })
+      ).toBe(false);
+
+      // The correctly-bound signature verifies.
+      const boundSig = signBound(timestamp, BODY);
+      expect(
+        verifyWebhook(BODY, boundSig, SECRET, { timestamp, toleranceSec, now })
+      ).toBe(true);
+    });
+
+    it("rejects an old body+signature replayed under a fresh timestamp", () => {
+      const oldTimestamp = now - 10; // originally within tolerance
+      const capturedSig = signBound(oldTimestamp, BODY);
+
+      // Original delivery verifies.
+      expect(
+        verifyWebhook(BODY, capturedSig, SECRET, {
+          timestamp: oldTimestamp,
           toleranceSec,
           now,
         })
       ).toBe(true);
-    });
 
-    it("returns true at exactly the tolerance boundary", () => {
-      const sig = sign(BODY);
+      // Attacker re-sends the SAME body + SAME signature but swaps in a fresh
+      // timestamp to beat the freshness window. Because the timestamp is bound,
+      // the recomputed HMAC no longer matches the captured signature.
+      const freshTimestamp = now; // well inside tolerance
       expect(
-        verifyWebhook(BODY, sig, SECRET, {
-          timestamp: now - toleranceSec,
-          toleranceSec,
-          now,
-        })
-      ).toBe(true);
-    });
-
-    it("returns false when the timestamp is older than the tolerance", () => {
-      const sig = sign(BODY);
-      expect(
-        verifyWebhook(BODY, sig, SECRET, {
-          timestamp: now - (toleranceSec + 1),
+        verifyWebhook(BODY, capturedSig, SECRET, {
+          timestamp: freshTimestamp,
           toleranceSec,
           now,
         })
       ).toBe(false);
     });
 
-    it("returns false for a far-future timestamp outside tolerance", () => {
-      const sig = sign(BODY);
+    it("rejects an old body+signature replayed under a fresh timestamp (Buffer body)", () => {
+      const buf = Buffer.from(BODY, "utf8");
+      const oldTimestamp = now - 10;
+      const capturedSig = signBound(oldTimestamp, buf);
+
       expect(
-        verifyWebhook(BODY, sig, SECRET, {
-          timestamp: now + (toleranceSec + 1),
+        verifyWebhook(buf, capturedSig, SECRET, {
+          timestamp: oldTimestamp,
+          toleranceSec,
+          now,
+        })
+      ).toBe(true);
+      expect(
+        verifyWebhook(buf, capturedSig, SECRET, {
+          timestamp: now,
           toleranceSec,
           now,
         })
       ).toBe(false);
     });
 
-    it("rejects a stale request even when the signature itself is valid", () => {
-      const sig = sign(BODY);
+    it("supports a provider-specific signedPayload override", () => {
+      // Some gateways sign `${body}|${timestamp}` instead of the Stripe scheme.
+      const timestamp = now - 5;
+      const providerPayload = `${BODY}|${timestamp}`;
+      const sig = sign(providerPayload);
+
+      expect(
+        verifyWebhook(BODY, sig, SECRET, {
+          timestamp,
+          toleranceSec,
+          now,
+          signedPayload: providerPayload,
+        })
+      ).toBe(true);
+
+      // Replaying the same signature under a fresh timestamp fails the window
+      // even though the body is unchanged.
       expect(
         verifyWebhook(BODY, sig, SECRET, {
           timestamp: now - 10_000,
           toleranceSec,
           now,
+          signedPayload: providerPayload,
         })
       ).toBe(false);
     });
 
-    it("ignores the timestamp when toleranceSec is omitted", () => {
-      const sig = sign(BODY);
+    it("never throws on a length-mismatched signature under replay options", () => {
+      const timestamp = now - 1;
+      expect(() =>
+        verifyWebhook(BODY, "deadbeef", SECRET, { timestamp, toleranceSec, now })
+      ).not.toThrow();
       expect(
-        verifyWebhook(BODY, sig, SECRET, {
-          timestamp: now - 10_000,
-          now,
-        })
-      ).toBe(true);
+        verifyWebhook(BODY, "deadbeef", SECRET, { timestamp, toleranceSec, now })
+      ).toBe(false);
     });
   });
 });

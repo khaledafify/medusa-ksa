@@ -20,7 +20,9 @@ const PREFIX = "core";
  * cannot represent exactly (the classic `1.005` vector) are corrected with a tiny
  * epsilon before rounding, so `sarToHalalas(1.005)` deterministically yields `101`.
  *
- * @throws {KsaError} `invalid_amount` if `sar` is not a finite number, or is negative.
+ * @throws {KsaError} `invalid_amount` if `sar` is not a finite number, is
+ *   negative, or converts to a value outside the safe integer range (where
+ *   rounding to integer halalas would no longer be exact).
  */
 export function sarToHalalas(sar: number): SarAmount {
   if (typeof sar !== "number" || !Number.isFinite(sar)) {
@@ -41,6 +43,16 @@ export function sarToHalalas(sar: number): SarAmount {
   // the .5 boundary in binary (e.g. 1.005 -> 100.49999999999999) round half-up.
   const corrected = scaled + Math.sign(scaled) * Number.EPSILON * Math.abs(scaled);
   const halalas = Math.round(corrected);
+
+  // Beyond Number.MAX_SAFE_INTEGER, integer arithmetic silently loses precision,
+  // so a "rounded" halalas value would no longer be exact — reject rather than
+  // hand a connector a money amount that cannot be trusted.
+  if (!Number.isSafeInteger(halalas)) {
+    throw new KsaError(
+      `SAR amount ${sar} converts to ${halalas} halalas, which exceeds the safe integer range`,
+      { prefix: PREFIX, code: KsaErrorCodes.INVALID_AMOUNT },
+    );
+  }
 
   return halalas as SarAmount;
 }

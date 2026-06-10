@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { KsaError, KsaErrorCodes } from "./errors.js";
-import { decrypt, encrypt } from "./secrets.js";
+import { decrypt, encrypt, secrets } from "./secrets.js";
 
 /** A valid 32-byte raw key. */
 const rawKey = (): Buffer => randomBytes(32);
@@ -79,12 +79,14 @@ describe("secrets (AES-256-GCM)", () => {
     }
 
     expect(thrown).toBeInstanceOf(KsaError);
-    expect((thrown as KsaError).code).toBe("decrypt_failed");
+    // The public, contract-level decryption code — never a private string.
+    expect((thrown as KsaError).code).toBe(KsaErrorCodes.DECRYPTION_FAILED);
+    expect((thrown as KsaError).code).toBe("decryption_failed");
     // wrong-key failures must surface a clear cause for debugging.
     expect((thrown as KsaError).cause).toBeDefined();
   });
 
-  it("throws on tampered ciphertext", () => {
+  it("throws DECRYPTION_FAILED on tampered ciphertext", () => {
     const key = rawKey();
     const payload = encrypt("secret payload", key);
 
@@ -94,10 +96,17 @@ describe("secrets (AES-256-GCM)", () => {
     bytes[last] = bytes[last]! ^ 0xff;
     const tampered = bytes.toString("base64");
 
-    expect(() => decrypt(tampered, key)).toThrowError(KsaError);
+    let thrown: unknown;
+    try {
+      decrypt(tampered, key);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(KsaError);
+    expect((thrown as KsaError).code).toBe(KsaErrorCodes.DECRYPTION_FAILED);
   });
 
-  it("throws on a tampered auth tag", () => {
+  it("throws DECRYPTION_FAILED on a tampered auth tag", () => {
     const key = rawKey();
     const payload = encrypt("secret payload", key);
 
@@ -106,10 +115,17 @@ describe("secrets (AES-256-GCM)", () => {
     bytes[12] = bytes[12]! ^ 0xff;
     const tampered = bytes.toString("base64");
 
-    expect(() => decrypt(tampered, key)).toThrowError(KsaError);
+    let thrown: unknown;
+    try {
+      decrypt(tampered, key);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(KsaError);
+    expect((thrown as KsaError).code).toBe(KsaErrorCodes.DECRYPTION_FAILED);
   });
 
-  it("throws on a truncated / malformed payload", () => {
+  it("throws DECRYPTION_FAILED on a truncated / malformed payload", () => {
     const key = rawKey();
 
     let thrown: unknown;
@@ -120,7 +136,9 @@ describe("secrets (AES-256-GCM)", () => {
     }
 
     expect(thrown).toBeInstanceOf(KsaError);
-    expect((thrown as KsaError).code).toBe("malformed_ciphertext");
+    // Malformed ciphertext maps to the SAME public code as auth failures, so
+    // callers never branch on a private, suite-internal string.
+    expect((thrown as KsaError).code).toBe(KsaErrorCodes.DECRYPTION_FAILED);
   });
 
   it("throws on an invalid raw key length when encrypting", () => {
@@ -157,6 +175,18 @@ describe("secrets (AES-256-GCM)", () => {
 
     expect(thrown).toBeInstanceOf(KsaError);
     expect((thrown as KsaError).code).toBe(KsaErrorCodes.INVALID_ENCRYPTION_KEY);
+  });
+
+  it("exposes a secrets namespace that round-trips via the same primitives", () => {
+    expect(typeof secrets.encrypt).toBe("function");
+    expect(typeof secrets.decrypt).toBe("function");
+    // The namespace must reference the very same functions as the named exports.
+    expect(secrets.encrypt).toBe(encrypt);
+    expect(secrets.decrypt).toBe(decrypt);
+
+    const key = rawKey();
+    const plaintext = "namespace round-trip";
+    expect(secrets.decrypt(secrets.encrypt(plaintext, key), key)).toBe(plaintext);
   });
 
   it("does not echo the key or payload in error messages", () => {
