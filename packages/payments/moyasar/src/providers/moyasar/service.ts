@@ -347,6 +347,12 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
       const data = (input.data ?? {}) as MoyasarSessionData;
       const id = this.requirePaymentId(data, "refund");
       const halalas = sarToHalalas(bigNumberToNumber(input.amount));
+      if (halalas <= 0) {
+        throw new KsaError(
+          "refund amount must be at least 1 halala.",
+          { prefix: MOYASAR_PREFIX, code: KsaErrorCodes.INVALID_AMOUNT },
+        );
+      }
 
       const payment = await this.client_.fetchPayment(id);
       if (payment.status === "refunded" && (payment.refunded ?? 0) >= halalas) {
@@ -448,9 +454,10 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
     payload: ProviderWebhookPayload["payload"],
   ): Promise<WebhookActionResult> {
     try {
-      const event = payload.data as Partial<MoyasarWebhookEvent> | undefined;
+      const event = payload.data as Partial<MoyasarWebhookEvent> | null | undefined;
       const paymentId = event?.data?.id;
       if (
+        event === null ||
         event === undefined ||
         typeof event.type !== "string" ||
         typeof paymentId !== "string" ||

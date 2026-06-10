@@ -148,6 +148,116 @@ describe("initiatePayment", () => {
 
     expect(result.data).toMatchObject({ description: "Order 1001" });
   });
+
+  it("generates a session id when the input data carries none", async () => {
+    const service = makeService();
+
+    const result = await service.initiatePayment({
+      amount: 10,
+      currency_code: "SAR",
+      data: {},
+    });
+
+    expect(typeof result.id).toBe("string");
+    expect(result.id).not.toBe("");
+    expect(result.data).toMatchObject({ session_id: result.id });
+  });
+
+  it("accepts a string amount", async () => {
+    const service = makeService();
+
+    const result = await service.initiatePayment({
+      amount: "49.99",
+      currency_code: "SAR",
+      data: { session_id: "payses_1" },
+    });
+
+    expect(result.data).toMatchObject({ amount: 4_999 });
+  });
+
+  it("accepts a Medusa BigNumber raw value ({ value })", async () => {
+    const service = makeService();
+
+    const result = await service.initiatePayment({
+      amount: { value: "49.99" },
+      currency_code: "SAR",
+      data: { session_id: "payses_1" },
+    });
+
+    expect(result.data).toMatchObject({ amount: 4_999 });
+  });
+
+  it("accepts a bignumber.js-style object ({ toNumber })", async () => {
+    const service = makeService();
+
+    const result = await service.initiatePayment({
+      amount: { toNumber: () => 49.99 } as never,
+      currency_code: "SAR",
+      data: { session_id: "payses_1" },
+    });
+
+    expect(result.data).toMatchObject({ amount: 4_999 });
+  });
+
+  it("rounds sub-halala precision at the halalas boundary (core half-up rule)", async () => {
+    const service = makeService();
+
+    const result = await service.initiatePayment({
+      amount: 49.999,
+      currency_code: "SAR",
+      data: { session_id: "payses_1" },
+    });
+
+    expect(result.data).toMatchObject({ amount: 5_000 });
+  });
+
+  it("accepts a zero amount as zero halalas", async () => {
+    const service = makeService();
+
+    const result = await service.initiatePayment({
+      amount: 0,
+      currency_code: "SAR",
+      data: { session_id: "payses_1" },
+    });
+
+    expect(result.data).toMatchObject({ amount: 0 });
+  });
+
+  it("rejects a negative amount", async () => {
+    const service = makeService();
+
+    await expect(
+      service.initiatePayment({
+        amount: -10,
+        currency_code: "SAR",
+        data: { session_id: "payses_1" },
+      }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+  });
+
+  it("rejects a non-numeric amount", async () => {
+    const service = makeService();
+
+    await expect(
+      service.initiatePayment({
+        amount: "not-a-number",
+        currency_code: "SAR",
+        data: { session_id: "payses_1" },
+      }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+  });
+
+  it("rejects an amount beyond the safe integer range", async () => {
+    const service = makeService();
+
+    await expect(
+      service.initiatePayment({
+        amount: Number.MAX_SAFE_INTEGER,
+        currency_code: "SAR",
+        data: { session_id: "payses_1" },
+      }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+  });
 });
 
 describe("authorizePayment", () => {
@@ -274,6 +384,92 @@ describe("authorizePayment", () => {
     );
   });
 
+  it("rejects authorization when the session has no session_id", async () => {
+    const createPayment = vi.fn();
+    const service = makeService({ createPayment });
+
+    await expect(
+      service.authorizePayment({
+        data: sessionData({ session_id: undefined }),
+      }),
+    ).rejects.toSatisfy(
+      (err) =>
+        MedusaError.isMedusaError(err) &&
+        (err as Error).message.includes("session_id"),
+    );
+    expect(createPayment).not.toHaveBeenCalled();
+  });
+
+  it("rejects authorization when the session amount is not integer halalas", async () => {
+    const createPayment = vi.fn();
+    const service = makeService({ createPayment });
+
+    await expect(
+      service.authorizePayment({
+        data: sessionData({ amount: 49.99 }),
+      }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+    expect(createPayment).not.toHaveBeenCalled();
+  });
+
+  it("rejects authorization when the session amount is negative", async () => {
+    const createPayment = vi.fn();
+    const service = makeService({ createPayment });
+
+    await expect(
+      service.authorizePayment({
+        data: sessionData({ amount: -100 }),
+      }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+    expect(createPayment).not.toHaveBeenCalled();
+  });
+
+  it("stays requires_more when re-authorizing while the 3DS challenge is still open", async () => {
+    const fetchPayment = vi.fn(async () =>
+      paidPayment({
+        status: "initiated",
+        source: {
+          type: "creditcard",
+          transaction_url: "https://api.moyasar.com/3ds/challenge",
+        },
+      }),
+    );
+    const service = makeService({ fetchPayment });
+
+    const result = await service.authorizePayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(result.status).toBe("requires_more");
+    expect(result.data).toMatchObject({
+      transaction_url: "https://api.moyasar.com/3ds/challenge",
+    });
+  });
+
+  it("maps a voided payment to canceled on re-authorization", async () => {
+    const fetchPayment = vi.fn(async () => paidPayment({ status: "voided" }));
+    const service = makeService({ fetchPayment });
+
+    const result = await service.authorizePayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(result.status).toBe("canceled");
+  });
+
+  it("maps an unknown future Moyasar status to pending instead of guessing", async () => {
+    const fetchPayment = vi.fn(async () =>
+      paidPayment({ status: "verified" as never }),
+    );
+    const service = makeService({ fetchPayment });
+
+    const result = await service.authorizePayment({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(result.status).toBe("pending");
+  });
+
   it("rejects authorization when the storefront has not written back a callback_url", async () => {
     const service = makeService();
 
@@ -345,6 +541,21 @@ describe("capturePayment", () => {
     ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
   });
 
+  it("rejects confirmation of a failed payment with a message naming the state", async () => {
+    const fetchPayment = vi.fn(async () => paidPayment({ status: "failed" }));
+    const service = makeService({ fetchPayment });
+
+    await expect(
+      service.capturePayment({
+        data: sessionData({ moyasar_payment_id: "pay_1" }),
+      }),
+    ).rejects.toSatisfy(
+      (err) =>
+        MedusaError.isMedusaError(err) &&
+        (err as Error).message.includes("failed"),
+    );
+  });
+
   it("rejects confirmation when no Moyasar payment exists yet", async () => {
     const service = makeService();
 
@@ -393,6 +604,60 @@ describe("getPaymentStatus", () => {
     expect(result.status).toBe("requires_more");
   });
 
+  it("maps every terminal Moyasar status to the right session status", async () => {
+    const cases: [string, string][] = [
+      ["paid", "captured"],
+      ["captured", "captured"],
+      // Refunds live on the Payment record; the session's money WAS captured.
+      ["refunded", "captured"],
+      ["authorized", "authorized"],
+      ["failed", "error"],
+      ["voided", "canceled"],
+    ];
+
+    for (const [moyasarStatus, expected] of cases) {
+      const fetchPayment = vi.fn(async () =>
+        paidPayment({ status: moyasarStatus as never }),
+      );
+      const service = makeService({ fetchPayment });
+
+      const result = await service.getPaymentStatus({
+        data: sessionData({ moyasar_payment_id: "pay_1" }),
+      });
+
+      expect(result.status, `moyasar "${moyasarStatus}"`).toBe(expected);
+    }
+  });
+
+  it("maps initiated WITHOUT a transaction_url to pending (no challenge to redirect to)", async () => {
+    const fetchPayment = vi.fn(async () =>
+      paidPayment({
+        status: "initiated",
+        source: { type: "creditcard" },
+      }),
+    );
+    const service = makeService({ fetchPayment });
+
+    const result = await service.getPaymentStatus({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(result.status).toBe("pending");
+  });
+
+  it("maps an unknown future Moyasar status to pending", async () => {
+    const fetchPayment = vi.fn(async () =>
+      paidPayment({ status: "verified" as never }),
+    );
+    const service = makeService({ fetchPayment });
+
+    const result = await service.getPaymentStatus({
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(result.status).toBe("pending");
+  });
+
   it("reports pending while no Moyasar payment exists yet", async () => {
     const service = makeService();
 
@@ -434,6 +699,18 @@ describe("updatePayment", () => {
     });
 
     expect(result.data).toMatchObject({ amount: 10_050, currency: "SAR" });
+  });
+
+  it("rejects a non-SAR currency on update", async () => {
+    const service = makeService();
+
+    await expect(
+      service.updatePayment({
+        amount: 10,
+        currency_code: "usd",
+        data: sessionData(),
+      }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
   });
 
   it("rejects an amount change after the Moyasar payment was created", async () => {
@@ -540,6 +817,55 @@ describe("refundPayment", () => {
     await expect(
       service.refundPayment({ amount: 10, data: sessionData() }),
     ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+  });
+
+  it("rejects a zero refund without calling the API", async () => {
+    const refundPayment = vi.fn();
+    const fetchPayment = vi.fn();
+    const service = makeService({ refundPayment, fetchPayment });
+
+    await expect(
+      service.refundPayment({
+        amount: 0,
+        data: sessionData({ moyasar_payment_id: "pay_1" }),
+      }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+    expect(refundPayment).not.toHaveBeenCalled();
+  });
+
+  it("rejects a negative refund without calling the API", async () => {
+    const refundPayment = vi.fn();
+    const fetchPayment = vi.fn();
+    const service = makeService({ refundPayment, fetchPayment });
+
+    await expect(
+      service.refundPayment({
+        amount: -5,
+        data: sessionData({ moyasar_payment_id: "pay_1" }),
+      }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+    expect(refundPayment).not.toHaveBeenCalled();
+  });
+
+  it("does not silently no-op when the refunded amount is below the requested amount", async () => {
+    // A previously partial-refunded payment (status "refunded", 10 SAR of
+    // 49.99) gets a different refund request: forward it to Moyasar, which
+    // owns the single-refund rule, instead of pretending it succeeded.
+    const refundPayment = vi.fn(async (_id: string, _amount?: number) =>
+      paidPayment({ status: "refunded", refunded: 1_000 }),
+    );
+    const fetchPayment = vi.fn(async () =>
+      paidPayment({ status: "refunded", refunded: 1_000 }),
+    );
+    const service = makeService({ refundPayment, fetchPayment });
+
+    await service.refundPayment({
+      amount: 39.99,
+      data: sessionData({ moyasar_payment_id: "pay_1" }),
+    });
+
+    expect(refundPayment).toHaveBeenCalledTimes(1);
+    expect(refundPayment).toHaveBeenCalledWith("pay_1", 3_999);
   });
 
   it("never leaks the secret key when the refund fails", async () => {
@@ -862,6 +1188,99 @@ describe("getWebhookActionAndData", () => {
     );
 
     expect(result.action).toBe("not_supported");
+  });
+
+  it("maps every API-fetched state to the right webhook action", async () => {
+    const cases: [string, string][] = [
+      ["paid", "captured"],
+      ["captured", "captured"],
+      ["authorized", "authorized"],
+      ["failed", "failed"],
+      ["voided", "canceled"],
+      ["initiated", "pending"],
+      ["verified", "not_supported"],
+    ];
+
+    for (const [moyasarStatus, expected] of cases) {
+      const fetchPayment = vi.fn(async (_id: string) =>
+        paidPayment({ status: moyasarStatus as never }),
+      );
+      const service = makeWebhookService({ fetchPayment });
+
+      const result = await service.getWebhookActionAndData(
+        payloadFor(webhookEvent()),
+      );
+
+      expect(result.action, `moyasar "${moyasarStatus}"`).toBe(expected);
+    }
+  });
+
+  it("converts the webhook amount from halalas to SAR exactly (1 halala = 0.01)", async () => {
+    const fetchPayment = vi.fn(async (_id: string) =>
+      paidPayment({ amount: 1 }),
+    );
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(webhookEvent()),
+    );
+
+    expect(result.data).toMatchObject({ amount: 0.01 });
+  });
+
+  it("returns not_supported when the event payload has no payment id", async () => {
+    const fetchPayment = vi.fn();
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(
+        webhookEvent({ data: { ...paidPayment(), id: "" } }),
+      ),
+    );
+
+    expect(fetchPayment).not.toHaveBeenCalled();
+    expect(result.action).toBe("not_supported");
+  });
+
+  it("returns not_supported for a null body", async () => {
+    const fetchPayment = vi.fn();
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData({
+      data: null as never,
+      rawData: "null",
+      headers: {},
+    });
+
+    expect(fetchPayment).not.toHaveBeenCalled();
+    expect(result.action).toBe("not_supported");
+  });
+
+  it("returns not_supported when the session_id metadata is an empty string", async () => {
+    const orphan = paidPayment({ metadata: { session_id: "" } });
+    const fetchPayment = vi.fn(async (_id: string) => orphan);
+    const service = makeWebhookService({ fetchPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(webhookEvent({ data: orphan })),
+    );
+
+    expect(result.action).toBe("not_supported");
+  });
+
+  it("propagates an unknown-payment fetch failure so Moyasar redelivers", async () => {
+    // A 404 on the verify fetch means we could not confirm the event — fail
+    // the webhook (non-2xx) rather than ack an event we never validated.
+    const fetchPayment = vi.fn(async (_id: string) => {
+      throw new KsaError("GET /payments/pay_x responded 404 Not Found", {
+        prefix: "moyasar",
+      });
+    });
+    const service = makeWebhookService({ fetchPayment });
+
+    await expect(
+      service.getWebhookActionAndData(payloadFor(webhookEvent())),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
   });
 
   it("never leaks the secret key or webhook secret when the verify fetch fails", async () => {
