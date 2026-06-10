@@ -58,8 +58,12 @@ _Avoid_: tax invoice, receipt.
 
 ## Payments
 
+**Hosted payment**:
+A payment the backend creates server-side that returns a gateway-hosted URL; the storefront redirects the customer there to complete it (entering card/OTP on the gateway's page, not ours). The default flow — needs no client SDK and keeps card data off our systems.
+_Avoid_: checkout page, payment link, invoice.
+
 **Source**:
-A single-use token the storefront produces (via the gateway's client SDK, e.g. Moyasar.js) representing the customer's payment instrument; the backend creates a payment from it.
+A single-use token the storefront produces (via the gateway's client SDK, e.g. Moyasar.js) representing the customer's payment instrument; the backend creates a payment from it. The optional alternative to a hosted payment.
 _Avoid_: token, card, payment method.
 
 **Requires more action**:

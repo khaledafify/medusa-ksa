@@ -10,13 +10,25 @@
 
 ## 1. Locked design decisions (do not re-litigate)
 
-1. **Flow A — source/token.** Storefront tokenizes with Moyasar.js and hands the backend a single-use `source`; backend calls `POST /payments`. (Not the hosted-invoice flow.)
+1. **Dual-mode (hosted-redirect default + optional source).** Default: the backend creates a Moyasar **hosted payment** and returns its URL; the storefront (often a separate custom React app) just **redirects** — no Moyasar.js, no PCI exposure. Optional: if the storefront embeds Moyasar.js and writes a `source` to the session, the backend charges it via `POST /payments`. Both converge on the same `requires_more` + webhook model. **(Amended — see ADR-0005 and Amendment A1 below.)**
 2. **3DS → "requires more action".** `authorizePayment` returns a requires-more-action state carrying Moyasar's redirect URL when 3DS is needed (the norm for Mada/Saudi cards).
 3. **Webhook is the source of truth.** `payment_paid`/`payment_failed` decide the final outcome; a `GET /payments/:id` verify is the backup. The browser `callback_url` return is **never** trusted to mark paid.
 4. **Immediate-capture only.** Moyasar captures on successful `POST /payments`. `capturePayment` is a confirm/no-op. **No `capture` option** on the provider.
 5. **Webhook idempotency = idempotent against Medusa payment state.** No dedup table; redelivered `payment_paid` is a no-op. Pure provider, zero schema (ADR-0001).
-6. **Config = `MOYASAR_SECRET_KEY` + `MOYASAR_PUBLISHABLE_KEY` (both required) + optional `MOYASAR_WEBHOOK_SECRET`.** Provider surfaces the publishable key in `initiatePayment` session data.
-7. **v1 methods: card + Mada + Apple Pay** (one unified source path). **STC Pay deferred** (OTP epic).
+6. **Config = `MOYASAR_SECRET_KEY` (required)** + **`MOYASAR_PUBLISHABLE_KEY` (optional** — only for the embedded source path; surfaced in session data when present) + optional `MOYASAR_WEBHOOK_SECRET`. The storefront supplies `callback_url` via session data in **both** modes. **(Amended.)**
+7. **Methods: card + Mada + Apple Pay + STC Pay** — all via the hosted page (and via source where Moyasar.js supports them). **STC Pay is no longer deferred** (OTP runs on Moyasar's hosted page). **Samsung Pay**: include only if Moyasar actually supports it (verify docs.moyasar.com); if not, leave it out — don't fake a gateway capability. **(Amended.)**
+
+## Amendment A1 — dual-mode hosted redirect (delta over the source-only build)
+
+The provider was first built source-only; these deltas add the hosted-redirect default. Verify the exact Moyasar hosted API against docs.moyasar.com (likely **Invoices** — `POST /invoices` returning a hosted `url` — or a hosted payment form; confirm which, and its fields/`callback_url`/`success_url`).
+
+- **A1.1 — Publishable key optional.** Loosen the loader/options: `MOYASAR_SECRET_KEY` required; **`MOYASAR_PUBLISHABLE_KEY` optional** (surfaced in `initiatePayment` data only when set). The provider must boot on the secret key alone.
+- **A1.2 — Add Flow B (hosted payment).** New client method to create a hosted payment (amount halalas, currency, `callback_url`, description, metadata) → returns the hosted `url`. In `authorizePayment`: if the session has **no `source`** → create the hosted payment and return **`requires_more`** with the `url` (do **not** throw "no source"); if it **has** a `source` → current Flow A (`POST /payments`). `callback_url` stays required in both modes; the publishable key is **not** required for Flow B.
+- **A1.3 — Methods.** STC Pay + Samsung Pay ride the hosted page — no special backend code. Verify Moyasar supports each; update the README method table (STC Pay → supported via hosted; Samsung Pay → supported only if Moyasar offers it, else omit it honestly).
+- **A1.4 — Tests.** Add Flow B unit tests (no-source → hosted payment created, `url` surfaced, status `requires_more`); keep all Flow A + webhook tests green.
+- **A1.5 — Docs.** README + `.env.example`: publishable key optional; document both modes (redirect default, embedded optional); refresh the method table.
+
+All guard gates in §6 still apply unchanged.
 
 ## 2. Data contract (storefront ↔ backend)
 
