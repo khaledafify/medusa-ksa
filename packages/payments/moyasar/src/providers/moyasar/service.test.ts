@@ -7,7 +7,9 @@ import { KsaError } from "@medusa-ksa/core";
 import type { MoyasarClient } from "./client.js";
 import { MoyasarProviderService, paymentIdForSession } from "./service.js";
 import type {
+  MoyasarCreateHostedPaymentRequest,
   MoyasarCreatePaymentRequest,
+  MoyasarHostedPayment,
   MoyasarPayment,
   MoyasarSessionData,
   MoyasarWebhookEvent,
@@ -394,15 +396,21 @@ describe("authorizePayment", () => {
     expect(b.status).toBe("authorized");
   });
 
-  it("rejects authorization when the storefront has not written back a source", async () => {
-    const service = makeService();
-
-    await expect(
-      service.authorizePayment({ data: sessionData({ source: undefined }) }),
-    ).rejects.toSatisfy(
-      (err) =>
-        MedusaError.isMedusaError(err) && (err as Error).message.includes('source'),
+  it("falls back to the hosted-redirect flow when the storefront has not written back a source", async () => {
+    // Amendment A1: no source no longer throws — it is the default Flow B.
+    const createHostedPayment = vi.fn(
+      async (_req: MoyasarCreateHostedPaymentRequest) => hostedPayment(),
     );
+    const createPayment = vi.fn();
+    const service = makeService({ createHostedPayment, createPayment });
+
+    const result = await service.authorizePayment({
+      data: sessionData({ source: undefined }),
+    });
+
+    expect(createPayment).not.toHaveBeenCalled();
+    expect(createHostedPayment).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("requires_more");
   });
 
   it("rejects authorization when the session has no session_id", async () => {
@@ -1319,5 +1327,407 @@ describe("getWebhookActionAndData", () => {
         !message.includes(WEBHOOK_SECRET)
       );
     });
+  });
+
+  it("routes a hosted-page payment via its hosted payment's metadata when the payment carries none", async () => {
+    // Verified in the live sandbox: payments made on the hosted page do NOT
+    // inherit the hosted payment's metadata — invoice_id is the only way back.
+    const hostedPaid = paidPayment({ metadata: null, invoice_id: "inv_1" });
+    const fetchPayment = vi.fn(async (_id: string) => hostedPaid);
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "paid", payments: [hostedPaid] }),
+    );
+    const service = makeWebhookService({ fetchPayment, fetchHostedPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(webhookEvent({ data: hostedPaid })),
+    );
+
+    expect(fetchHostedPayment).toHaveBeenCalledTimes(1);
+    expect(fetchHostedPayment).toHaveBeenCalledWith("inv_1");
+    expect(result.action).toBe("captured");
+    expect(result.data).toMatchObject({ session_id: "payses_1", amount: 49.99 });
+  });
+
+  it("returns not_supported when neither the payment nor its hosted payment carries a session_id", async () => {
+    const orphan = paidPayment({ metadata: null, invoice_id: "inv_1" });
+    const fetchPayment = vi.fn(async (_id: string) => orphan);
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ metadata: null }),
+    );
+    const service = makeWebhookService({ fetchPayment, fetchHostedPayment });
+
+    const result = await service.getWebhookActionAndData(
+      payloadFor(webhookEvent({ data: orphan })),
+    );
+
+    expect(result.action).toBe("not_supported");
+  });
+});
+
+function hostedPayment(
+  overrides: Partial<MoyasarHostedPayment> = {},
+): MoyasarHostedPayment {
+  return {
+    id: "inv_1",
+    status: "initiated",
+    amount: 4_999,
+    currency: "SAR",
+    description: "Order 1001",
+    url: "https://checkout.moyasar.com/invoices/inv_1",
+    metadata: { session_id: "payses_1" },
+    payments: [],
+    ...overrides,
+  };
+}
+
+describe("authorizePayment — Flow B (hosted redirect)", () => {
+  function hostedSession(
+    overrides: Partial<MoyasarSessionData> = {},
+  ): MoyasarSessionData {
+    const data = sessionData({ description: "Order 1001", ...overrides });
+    delete data.source;
+    return data;
+  }
+
+  it("creates a hosted payment when the session has no source and surfaces its url as requires_more", async () => {
+    const createHostedPayment = vi.fn(
+      async (_req: MoyasarCreateHostedPaymentRequest) => hostedPayment(),
+    );
+    const createPayment = vi.fn();
+    const service = makeService({ createHostedPayment, createPayment });
+
+    const result = await service.authorizePayment({ data: hostedSession() });
+
+    expect(createPayment).not.toHaveBeenCalled();
+    expect(createHostedPayment).toHaveBeenCalledTimes(1);
+    expect(createHostedPayment).toHaveBeenCalledWith({
+      amount: 4_999,
+      currency: "SAR",
+      description: "Order 1001",
+      success_url: "https://store.example/3ds/return",
+      back_url: "https://store.example/3ds/return",
+      metadata: { session_id: "payses_1" },
+    });
+    expect(result.status).toBe("requires_more");
+    expect(result.data).toMatchObject({
+      moyasar_hosted_payment_id: "inv_1",
+      url: "https://checkout.moyasar.com/invoices/inv_1",
+      status: "initiated",
+    });
+  });
+
+  it("works without a publishable key — Flow B needs only the secret key", async () => {
+    const createHostedPayment = vi.fn(
+      async (_req: MoyasarCreateHostedPaymentRequest) => hostedPayment(),
+    );
+    const service = new MoyasarProviderService({}, { secretKey: "sk_test_only" });
+    Reflect.set(service, "client_", { createHostedPayment });
+
+    const data = hostedSession();
+    delete data.publishable_key;
+    const result = await service.authorizePayment({ data });
+
+    expect(result.status).toBe("requires_more");
+  });
+
+  it("falls back to a generated description when the session has none — Moyasar requires one", async () => {
+    const createHostedPayment = vi.fn(
+      async (_req: MoyasarCreateHostedPaymentRequest) => hostedPayment(),
+    );
+    const service = makeService({ createHostedPayment });
+
+    const data = hostedSession();
+    delete data.description;
+    await service.authorizePayment({ data });
+
+    const request = createHostedPayment.mock.calls[0]![0];
+    expect(typeof request.description).toBe("string");
+    expect(request.description.length).toBeGreaterThan(0);
+  });
+
+  it("still requires a callback_url in hosted mode", async () => {
+    const service = makeService();
+
+    const data = hostedSession();
+    delete data.callback_url;
+
+    await expect(service.authorizePayment({ data })).rejects.toSatisfy(
+      (err) =>
+        MedusaError.isMedusaError(err) &&
+        (err as Error).message.includes("callback_url"),
+    );
+  });
+
+  it("collapses concurrent no-source authorizations into one hosted payment", async () => {
+    let calls = 0;
+    const createHostedPayment = vi.fn(
+      async (_req: MoyasarCreateHostedPaymentRequest) => {
+        calls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return hostedPayment();
+      },
+    );
+    const service = makeService({ createHostedPayment });
+
+    const [a, b] = await Promise.all([
+      service.authorizePayment({ data: hostedSession() }),
+      service.authorizePayment({ data: hostedSession() }),
+    ]);
+
+    expect(calls).toBe(1);
+    expect(a.status).toBe("requires_more");
+    expect(b.status).toBe("requires_more");
+  });
+
+  it("re-checks the existing hosted payment instead of creating a new one after the redirect", async () => {
+    const settled = paidPayment({ invoice_id: "inv_1", metadata: null });
+    const createHostedPayment = vi.fn();
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "paid", payments: [settled] }),
+    );
+    const service = makeService({ createHostedPayment, fetchHostedPayment });
+
+    const result = await service.authorizePayment({
+      data: hostedSession({ moyasar_hosted_payment_id: "inv_1" }),
+    });
+
+    expect(createHostedPayment).not.toHaveBeenCalled();
+    expect(fetchHostedPayment).toHaveBeenCalledWith("inv_1");
+    expect(result.status).toBe("authorized");
+    expect(result.data).toMatchObject({
+      moyasar_payment_id: "pay_1",
+      moyasar_hosted_payment_id: "inv_1",
+      status: "paid",
+    });
+    expect(result.data).not.toHaveProperty("url");
+  });
+
+  it("stays requires_more while the hosted payment is unpaid", async () => {
+    const fetchHostedPayment = vi.fn(async (_id: string) => hostedPayment());
+    const service = makeService({ fetchHostedPayment });
+
+    const result = await service.authorizePayment({
+      data: hostedSession({ moyasar_hosted_payment_id: "inv_1" }),
+    });
+
+    expect(result.status).toBe("requires_more");
+    expect(result.data).toMatchObject({
+      url: "https://checkout.moyasar.com/invoices/inv_1",
+    });
+  });
+
+  it("maps an expired hosted payment to canceled", async () => {
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "expired" }),
+    );
+    const service = makeService({ fetchHostedPayment });
+
+    const result = await service.authorizePayment({
+      data: hostedSession({ moyasar_hosted_payment_id: "inv_1" }),
+    });
+
+    expect(result.status).toBe("canceled");
+  });
+
+  it("prefers the charged source path when the session has both a source and a hosted payment id", async () => {
+    // moyasar_payment_id always wins: once a charge exists it is the money.
+    const fetchPayment = vi.fn(async (_id: string) => paidPayment());
+    const fetchHostedPayment = vi.fn();
+    const service = makeService({ fetchPayment, fetchHostedPayment });
+
+    const result = await service.authorizePayment({
+      data: hostedSession({
+        moyasar_payment_id: "pay_1",
+        moyasar_hosted_payment_id: "inv_1",
+      }),
+    });
+
+    expect(fetchHostedPayment).not.toHaveBeenCalled();
+    expect(result.status).toBe("authorized");
+  });
+});
+
+describe("lifecycle in hosted mode", () => {
+  function hostedData(
+    overrides: Partial<MoyasarSessionData> = {},
+  ): MoyasarSessionData {
+    return {
+      status: "initiated",
+      amount: 4_999,
+      currency: "SAR",
+      session_id: "payses_1",
+      callback_url: "https://store.example/3ds/return",
+      moyasar_hosted_payment_id: "inv_1",
+      url: "https://checkout.moyasar.com/invoices/inv_1",
+      ...overrides,
+    };
+  }
+
+  it("getPaymentStatus reports requires_more while the hosted payment is unpaid", async () => {
+    const fetchHostedPayment = vi.fn(async (_id: string) => hostedPayment());
+    const service = makeService({ fetchHostedPayment });
+
+    const result = await service.getPaymentStatus({ data: hostedData() });
+
+    expect(result.status).toBe("requires_more");
+  });
+
+  it("getPaymentStatus reports captured once the hosted payment is paid and merges the payment id", async () => {
+    const settled = paidPayment({ invoice_id: "inv_1", metadata: null });
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "paid", payments: [settled] }),
+    );
+    const service = makeService({ fetchHostedPayment });
+
+    const result = await service.getPaymentStatus({ data: hostedData() });
+
+    expect(result.status).toBe("captured");
+    expect(result.data).toMatchObject({ moyasar_payment_id: "pay_1" });
+  });
+
+  it("getPaymentStatus maps a canceled hosted payment to canceled", async () => {
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "canceled" }),
+    );
+    const service = makeService({ fetchHostedPayment });
+
+    const result = await service.getPaymentStatus({ data: hostedData() });
+
+    expect(result.status).toBe("canceled");
+  });
+
+  it("capturePayment confirms a paid hosted payment", async () => {
+    const settled = paidPayment({ invoice_id: "inv_1", metadata: null });
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "paid", payments: [settled] }),
+    );
+    const service = makeService({ fetchHostedPayment });
+
+    const result = await service.capturePayment({ data: hostedData() });
+
+    expect(result.data).toMatchObject({
+      moyasar_payment_id: "pay_1",
+      status: "paid",
+    });
+  });
+
+  it("capturePayment rejects an unpaid hosted payment", async () => {
+    const fetchHostedPayment = vi.fn(async (_id: string) => hostedPayment());
+    const service = makeService({ fetchHostedPayment });
+
+    await expect(
+      service.capturePayment({ data: hostedData() }),
+    ).rejects.toSatisfy((err) => MedusaError.isMedusaError(err));
+  });
+
+  it("retrievePayment returns the settled payment once the hosted payment is paid", async () => {
+    const settled = paidPayment({ invoice_id: "inv_1", metadata: null });
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "paid", payments: [settled] }),
+    );
+    const service = makeService({ fetchHostedPayment });
+
+    const result = await service.retrievePayment({ data: hostedData() });
+
+    expect(result.data).toEqual(settled);
+  });
+
+  it("retrievePayment returns the hosted payment while unpaid", async () => {
+    const unpaid = hostedPayment();
+    const fetchHostedPayment = vi.fn(async (_id: string) => unpaid);
+    const service = makeService({ fetchHostedPayment });
+
+    const result = await service.retrievePayment({ data: hostedData() });
+
+    expect(result.data).toEqual(unpaid);
+  });
+
+  it("refundPayment refunds the settled payment behind the hosted payment", async () => {
+    const settled = paidPayment({ invoice_id: "inv_1", metadata: null });
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "paid", payments: [settled] }),
+    );
+    const fetchPayment = vi.fn(async (_id: string) => settled);
+    const refundPayment = vi.fn(async (_id: string, _amount?: number) =>
+      paidPayment({ status: "refunded", refunded: 4_999, invoice_id: "inv_1" }),
+    );
+    const service = makeService({ fetchHostedPayment, fetchPayment, refundPayment });
+
+    const result = await service.refundPayment({
+      amount: 49.99,
+      data: hostedData(),
+    });
+
+    expect(refundPayment).toHaveBeenCalledWith("pay_1", 4_999);
+    expect(result.data).toMatchObject({ status: "refunded" });
+  });
+
+  it("cancelPayment cancels an unpaid hosted payment", async () => {
+    const fetchHostedPayment = vi.fn(async (_id: string) => hostedPayment());
+    const cancelHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "canceled" }),
+    );
+    const service = makeService({ fetchHostedPayment, cancelHostedPayment });
+
+    const result = await service.cancelPayment({ data: hostedData() });
+
+    expect(cancelHostedPayment).toHaveBeenCalledWith("inv_1");
+    expect(result.data).toMatchObject({ status: "canceled" });
+    expect(result.data).not.toHaveProperty("url");
+  });
+
+  it("cancelPayment is a no-op on an already-terminal hosted payment", async () => {
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "expired" }),
+    );
+    const cancelHostedPayment = vi.fn();
+    const service = makeService({ fetchHostedPayment, cancelHostedPayment });
+
+    const result = await service.cancelPayment({ data: hostedData() });
+
+    expect(cancelHostedPayment).not.toHaveBeenCalled();
+    expect(result.data).toMatchObject({ status: "expired" });
+  });
+
+  it("cancelPayment rejects a paid hosted payment — refund instead", async () => {
+    const settled = paidPayment({ invoice_id: "inv_1", metadata: null });
+    const fetchHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "paid", payments: [settled] }),
+    );
+    const cancelHostedPayment = vi.fn();
+    const service = makeService({ fetchHostedPayment, cancelHostedPayment });
+
+    await expect(
+      service.cancelPayment({ data: hostedData() }),
+    ).rejects.toSatisfy(
+      (err) =>
+        MedusaError.isMedusaError(err) &&
+        (err as Error).message.includes("refund"),
+    );
+    expect(cancelHostedPayment).not.toHaveBeenCalled();
+  });
+
+  it("deletePayment cancels an unpaid hosted payment and never fails on a paid one", async () => {
+    const fetchHostedPayment = vi.fn(async (_id: string) => hostedPayment());
+    const cancelHostedPayment = vi.fn(async (_id: string) =>
+      hostedPayment({ status: "canceled" }),
+    );
+    const service = makeService({ fetchHostedPayment, cancelHostedPayment });
+
+    const unpaidResult = await service.deletePayment({ data: hostedData() });
+    expect(cancelHostedPayment).toHaveBeenCalledWith("inv_1");
+    expect(unpaidResult.data).toMatchObject({ status: "canceled" });
+
+    const settled = paidPayment({ invoice_id: "inv_1", metadata: null });
+    const paidService = makeService({
+      fetchHostedPayment: vi.fn(async (_id: string) =>
+        hostedPayment({ status: "paid", payments: [settled] }),
+      ),
+      cancelHostedPayment: vi.fn(),
+    });
+
+    const paidResult = await paidService.deletePayment({ data: hostedData() });
+    expect(paidResult.data).toMatchObject({ moyasar_payment_id: "pay_1" });
   });
 });

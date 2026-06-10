@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { KsaError } from "@medusa-ksa/core";
 
 import { MOYASAR_API_BASE_URL, MoyasarClient } from "./client.js";
-import type { MoyasarPayment } from "./types.js";
+import type { MoyasarHostedPayment, MoyasarPayment } from "./types.js";
 
 const SECRET = "sk_test_supersecret123";
 
@@ -13,6 +13,17 @@ const PAYMENT: MoyasarPayment = {
   amount: 10_000,
   currency: "SAR",
   source: { type: "creditcard" },
+};
+
+const HOSTED_PAYMENT: MoyasarHostedPayment = {
+  id: "inv_1",
+  status: "initiated",
+  amount: 4_999,
+  currency: "SAR",
+  description: "Order 1001",
+  url: "https://checkout.moyasar.com/invoices/inv_1",
+  metadata: { session_id: "payses_1" },
+  payments: [],
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -133,6 +144,84 @@ describe("MoyasarClient", () => {
     await client.voidPayment("pay_1");
 
     expect(captured?.url).toBe(`${MOYASAR_API_BASE_URL}/payments/pay_1/void`);
+  });
+
+  it("POSTs hosted-payment creation to /invoices with halalas amounts and the full body", async () => {
+    let captured: { url: string; body: unknown } | undefined;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      captured = { url: String(url), body: JSON.parse(String(init?.body)) };
+      return jsonResponse(HOSTED_PAYMENT, 201);
+    }) as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+    const hosted = await client.createHostedPayment({
+      amount: 4_999,
+      currency: "SAR",
+      description: "Order 1001",
+      success_url: "https://store.example/checkout/return",
+      back_url: "https://store.example/checkout/return",
+      metadata: { session_id: "payses_1" },
+    });
+
+    expect(captured?.url).toBe(`${MOYASAR_API_BASE_URL}/invoices`);
+    expect(captured?.body).toEqual({
+      amount: 4_999,
+      currency: "SAR",
+      description: "Order 1001",
+      success_url: "https://store.example/checkout/return",
+      back_url: "https://store.example/checkout/return",
+      metadata: { session_id: "payses_1" },
+    });
+    expect(hosted.url).toBe("https://checkout.moyasar.com/invoices/inv_1");
+  });
+
+  it("GETs a hosted payment by id", async () => {
+    let captured: { url: string; method: string | undefined } | undefined;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      captured = { url: String(url), method: init?.method };
+      return jsonResponse(HOSTED_PAYMENT);
+    }) as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+    const hosted = await client.fetchHostedPayment("inv_1");
+
+    expect(captured?.url).toBe(`${MOYASAR_API_BASE_URL}/invoices/inv_1`);
+    expect(captured?.method).toBe("GET");
+    expect(hosted).toEqual(HOSTED_PAYMENT);
+  });
+
+  it("PUTs a hosted-payment cancel to /invoices/:id/cancel", async () => {
+    let captured: { url: string; method: string | undefined } | undefined;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      captured = { url: String(url), method: init?.method };
+      return jsonResponse({ ...HOSTED_PAYMENT, status: "canceled" });
+    }) as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+    const hosted = await client.cancelHostedPayment("inv_1");
+
+    expect(captured?.url).toBe(`${MOYASAR_API_BASE_URL}/invoices/inv_1/cancel`);
+    expect(captured?.method).toBe("PUT");
+    expect(hosted.status).toBe("canceled");
+  });
+
+  it("never retries hosted-payment creation, even on 5xx", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return jsonResponse({}, 500);
+    }) as typeof fetch;
+
+    const client = makeClient(fetchImpl, { retries: 3, baseDelayMs: 0 });
+    await expect(
+      client.createHostedPayment({
+        amount: 4_999,
+        currency: "SAR",
+        description: "Order 1001",
+      }),
+    ).rejects.toSatisfy((err) => KsaError.isKsaError(err));
+
+    expect(calls).toBe(1);
   });
 
   it("throws a KsaError on a non-2xx response", async () => {

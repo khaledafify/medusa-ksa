@@ -1,7 +1,9 @@
 import { HttpClient } from "@medusa-ksa/core";
 
 import type {
+  MoyasarCreateHostedPaymentRequest,
   MoyasarCreatePaymentRequest,
+  MoyasarHostedPayment,
   MoyasarPayment,
 } from "./types.js";
 
@@ -96,6 +98,38 @@ export class MoyasarClient {
     return this.http.request<MoyasarPayment>({
       method: "POST",
       path: `/payments/${encodeURIComponent(id)}/void`,
+    });
+  }
+
+  /**
+   * `POST /invoices` — create a hosted payment and get back the checkout
+   * `url` the storefront redirects the customer to (Flow B, ADR-0005).
+   * Amounts are halalas. Never retried: Moyasar has no `given_id` for
+   * invoices, so a transport retry could create a duplicate hosted payment.
+   */
+  async createHostedPayment(
+    request: MoyasarCreateHostedPaymentRequest,
+  ): Promise<MoyasarHostedPayment> {
+    return this.http.request<MoyasarHostedPayment>({
+      method: "POST",
+      path: "/invoices",
+      body: request,
+    });
+  }
+
+  /** `GET /invoices/:id` — the hosted payment with its payment attempts. */
+  async fetchHostedPayment(id: string): Promise<MoyasarHostedPayment> {
+    return this.http.request<MoyasarHostedPayment>({
+      method: "GET",
+      path: `/invoices/${encodeURIComponent(id)}`,
+    });
+  }
+
+  /** `PUT /invoices/:id/cancel` — cancel a hosted payment nobody paid yet. */
+  async cancelHostedPayment(id: string): Promise<MoyasarHostedPayment> {
+    return this.http.request<MoyasarHostedPayment>({
+      method: "PUT",
+      path: `/invoices/${encodeURIComponent(id)}/cancel`,
     });
   }
 }

@@ -39,6 +39,7 @@ import type { SarAmount } from "@medusa-ksa/core";
 
 import { MoyasarClient } from "./client.js";
 import type {
+  MoyasarHostedPayment,
   MoyasarOptions,
   MoyasarPayment,
   MoyasarSessionData,
@@ -87,6 +88,45 @@ function bigNumberToNumber(value: BigNumberInput): number {
   return Number.NaN;
 }
 
+/**
+ * The payment attempt that carries (or carried) the money on a hosted
+ * payment. Failed attempts may precede it — customers can retry on the
+ * hosted page — so the settled one is matched by state, not position.
+ */
+function settledPayment(
+  hosted: MoyasarHostedPayment,
+): MoyasarPayment | undefined {
+  return hosted.payments?.find(
+    (payment) =>
+      payment.status === "paid" ||
+      payment.status === "captured" ||
+      payment.status === "refunded" ||
+      payment.status === "authorized",
+  );
+}
+
+/** Map a hosted payment (no settled attempt) to the Medusa session status. */
+function mapHostedStatus(
+  hosted: MoyasarHostedPayment,
+): PaymentSessionStatus {
+  switch (hosted.status) {
+    case "paid":
+    case "refunded":
+      return "captured";
+    case "initiated":
+      return "requires_more";
+    case "failed":
+      return "error";
+    case "canceled":
+    case "expired":
+    case "voided":
+      return "canceled";
+    case "on_hold":
+    default:
+      return "pending";
+  }
+}
+
 /** Map a Moyasar payment to the Medusa payment-session status. */
 function mapPaymentStatus(payment: MoyasarPayment): PaymentSessionStatus {
   switch (payment.status) {
@@ -110,16 +150,22 @@ function mapPaymentStatus(payment: MoyasarPayment): PaymentSessionStatus {
 }
 
 /**
- * Moyasar payment provider for Medusa v2 (ADR-0005).
+ * Moyasar payment provider for Medusa v2 (ADR-0005) — dual-mode.
  *
- * Flow A (source/token): the storefront tokenizes with Moyasar.js using the
- * publishable key surfaced by {@link initiatePayment}, writes `source` +
+ * Hosted redirect (Flow B, default): when the session carries no `source`,
+ * {@link authorizePayment} creates a Moyasar hosted payment and returns
+ * `requires_more` with its checkout `url`; the storefront simply redirects —
+ * no Moyasar.js, no PCI exposure. The customer pays any enabled method
+ * (card / Mada / Apple Pay / STC Pay / Samsung Pay) on Moyasar's page.
+ *
+ * Source (Flow A, optional): the storefront tokenizes with Moyasar.js using
+ * the publishable key surfaced by {@link initiatePayment}, writes `source` +
  * `callback_url` back onto the session, and {@link authorizePayment} charges
  * via `POST /payments`. Saudi cards mandate 3-D Secure, so authorization
- * frequently returns `requires_more` with Moyasar's `transaction_url`; the
- * webhook (`payment_paid` / `payment_failed`) is the source of truth for the
- * final outcome — the browser return is never trusted.
+ * frequently returns `requires_more` with Moyasar's `transaction_url`.
  *
+ * Both modes converge: the webhook (`payment_paid` / `payment_failed`) is the
+ * source of truth for the final outcome — the browser return is never trusted.
  * Moyasar captures immediately on a successful charge, so
  * {@link capturePayment} is a confirm/no-op and there is no `capture` option.
  */
@@ -189,10 +235,13 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
   }
 
   /**
-   * First call charges the storefront-written `source` via `POST /payments`;
-   * `initiated` + `transaction_url` surfaces as `requires_more` (3-D Secure).
-   * Subsequent calls (after the 3DS return) re-check the existing payment via
-   * `GET /payments/:id` instead of charging again.
+   * Dual-mode authorization (ADR-0005). A session with a storefront-written
+   * `source` is charged via `POST /payments` (Flow A); `initiated` +
+   * `transaction_url` surfaces as `requires_more` (3-D Secure). A session
+   * without one gets a hosted payment whose checkout `url` surfaces as
+   * `requires_more` (Flow B — the hosted-redirect default). Subsequent calls
+   * (after the customer returns) re-check the existing payment or hosted
+   * payment instead of charging again.
    */
   async authorizePayment(
     input: AuthorizePaymentInput,
@@ -204,6 +253,12 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
         const payment = await this.client_.fetchPayment(data.moyasar_payment_id);
         return this.toAuthorizeResult(payment, data);
       }
+      if (typeof data.moyasar_hosted_payment_id === "string") {
+        const hosted = await this.client_.fetchHostedPayment(
+          data.moyasar_hosted_payment_id,
+        );
+        return this.toAuthorizeResultFromHosted(hosted, data);
+      }
 
       const sessionId = data.session_id;
       if (typeof sessionId !== "string" || sessionId === "") {
@@ -212,15 +267,9 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
           { prefix: MOYASAR_PREFIX, code: KsaErrorCodes.INVALID_INPUT },
         );
       }
-      if (data.source === undefined || data.source === null) {
-        throw new KsaError(
-          "payment session has no source — the storefront must tokenize with Moyasar.js and write `source` back onto the session before authorization.",
-          { prefix: MOYASAR_PREFIX, code: KsaErrorCodes.INVALID_INPUT },
-        );
-      }
       if (typeof data.callback_url !== "string" || data.callback_url === "") {
         throw new KsaError(
-          "payment session has no callback_url — the storefront must write its 3-D Secure return route onto the session before authorization.",
+          "payment session has no callback_url — the storefront must write its return route onto the session before authorization.",
           { prefix: MOYASAR_PREFIX, code: KsaErrorCodes.INVALID_INPUT },
         );
       }
@@ -231,6 +280,26 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
         );
       }
 
+      if (data.source === undefined || data.source === null) {
+        // Flow B (default): no source → hosted payment, storefront redirects.
+        const hosted = await withIdempotency(
+          `moyasar:hosted:${sessionId}`,
+          () =>
+            this.client_.createHostedPayment({
+              amount: data.amount!,
+              currency: "SAR",
+              // Moyasar requires a description and shows it on the hosted page.
+              description: data.description ?? `Payment ${sessionId}`,
+              success_url: data.callback_url!,
+              back_url: data.callback_url!,
+              metadata: { session_id: sessionId },
+            }),
+        );
+
+        return this.toAuthorizeResultFromHosted(hosted, data);
+      }
+
+      // Flow A: charge the storefront-written source.
       const payment = await withIdempotency(
         `moyasar:create:${sessionId}`,
         () =>
@@ -261,6 +330,33 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
   ): Promise<CapturePaymentOutput> {
     try {
       const data = (input.data ?? {}) as MoyasarSessionData;
+
+      if (
+        typeof data.moyasar_payment_id !== "string" &&
+        typeof data.moyasar_hosted_payment_id === "string"
+      ) {
+        // Hosted mode: confirm via the settled attempt on the hosted payment.
+        const hosted = await this.client_.fetchHostedPayment(
+          data.moyasar_hosted_payment_id,
+        );
+        const settled = settledPayment(hosted);
+        if (
+          settled !== undefined &&
+          (settled.status === "paid" || settled.status === "captured")
+        ) {
+          return {
+            data: this.mergePaymentIntoData(
+              this.hostedBase(data, hosted),
+              settled,
+            ),
+          };
+        }
+        throw new KsaError(
+          `cannot confirm capture — hosted payment ${hosted.id} is "${hosted.status}" with no paid attempt. The customer has not completed the hosted checkout.`,
+          { prefix: MOYASAR_PREFIX, code: KsaErrorCodes.PROVIDER_ERROR },
+        );
+      }
+
       const id = this.requirePaymentId(data, "capture");
 
       const payment = await this.client_.fetchPayment(id);
@@ -282,27 +378,60 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
   ): Promise<GetPaymentStatusOutput> {
     try {
       const data = (input.data ?? {}) as MoyasarSessionData;
-      if (typeof data.moyasar_payment_id !== "string") {
-        // Nothing charged yet — the session is still collecting checkout input.
-        return { status: "pending" };
+
+      if (typeof data.moyasar_payment_id === "string") {
+        const payment = await this.client_.fetchPayment(data.moyasar_payment_id);
+        return {
+          status: mapPaymentStatus(payment),
+          data: this.mergePaymentIntoData(data, payment),
+        };
       }
 
-      const payment = await this.client_.fetchPayment(data.moyasar_payment_id);
-      return {
-        status: mapPaymentStatus(payment),
-        data: this.mergePaymentIntoData(data, payment),
-      };
+      if (typeof data.moyasar_hosted_payment_id === "string") {
+        const hosted = await this.client_.fetchHostedPayment(
+          data.moyasar_hosted_payment_id,
+        );
+        const settled = settledPayment(hosted);
+        if (settled !== undefined) {
+          return {
+            status: mapPaymentStatus(settled),
+            data: this.mergePaymentIntoData(this.hostedBase(data, hosted), settled),
+          };
+        }
+        return {
+          status: mapHostedStatus(hosted),
+          data: this.mergeHostedIntoData(data, hosted),
+        };
+      }
+
+      // Nothing charged yet — the session is still collecting checkout input.
+      return { status: "pending" };
     } catch (err) {
       throw toMedusaError(err);
     }
   }
 
-  /** `GET /payments/:id` — the payment as found at Moyasar. */
+  /**
+   * The payment as found at Moyasar — in hosted mode, the settled attempt
+   * once one exists, otherwise the hosted payment itself.
+   */
   async retrievePayment(
     input: RetrievePaymentInput,
   ): Promise<RetrievePaymentOutput> {
     try {
       const data = (input.data ?? {}) as MoyasarSessionData;
+
+      if (
+        typeof data.moyasar_payment_id !== "string" &&
+        typeof data.moyasar_hosted_payment_id === "string"
+      ) {
+        const hosted = await this.client_.fetchHostedPayment(
+          data.moyasar_hosted_payment_id,
+        );
+        const settled = settledPayment(hosted);
+        return { data: settled ?? hosted };
+      }
+
       const id = this.requirePaymentId(data, "retrieve");
       const payment = await this.client_.fetchPayment(id);
       return { data: payment };
@@ -348,7 +477,26 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
    */
   async refundPayment(input: RefundPaymentInput): Promise<RefundPaymentOutput> {
     try {
-      const data = (input.data ?? {}) as MoyasarSessionData;
+      let data = (input.data ?? {}) as MoyasarSessionData;
+
+      if (
+        typeof data.moyasar_payment_id !== "string" &&
+        typeof data.moyasar_hosted_payment_id === "string"
+      ) {
+        // Hosted mode before any state merge: the money lives on the settled
+        // attempt — resolve it so the refund targets a real payment.
+        const hosted = await this.client_.fetchHostedPayment(
+          data.moyasar_hosted_payment_id,
+        );
+        const settled = settledPayment(hosted);
+        if (settled !== undefined) {
+          data = {
+            ...this.hostedBase(data, hosted),
+            moyasar_payment_id: settled.id,
+          };
+        }
+      }
+
       const id = this.requirePaymentId(data, "refund");
       const halalas = sarToHalalas(bigNumberToNumber(input.amount));
       if (halalas <= 0) {
@@ -383,6 +531,9 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
     try {
       const data = (input.data ?? {}) as MoyasarSessionData;
       if (typeof data.moyasar_payment_id !== "string") {
+        if (typeof data.moyasar_hosted_payment_id === "string") {
+          return await this.cancelHosted(data, /* lenient */ false);
+        }
         // Nothing was charged — cancelling the session needs no provider call.
         return { data: { ...data } };
       }
@@ -421,6 +572,9 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
     try {
       const data = (input.data ?? {}) as MoyasarSessionData;
       if (typeof data.moyasar_payment_id !== "string") {
+        if (typeof data.moyasar_hosted_payment_id === "string") {
+          return await this.cancelHosted(data, /* lenient */ true);
+        }
         return { data: { ...data } };
       }
 
@@ -485,7 +639,17 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
 
       const payment = await this.client_.fetchPayment(paymentId);
 
-      const sessionId = payment.metadata?.session_id;
+      let sessionId = payment.metadata?.session_id;
+      if (
+        (typeof sessionId !== "string" || sessionId === "") &&
+        typeof payment.invoice_id === "string" &&
+        payment.invoice_id !== ""
+      ) {
+        // Hosted-page payments do not inherit the hosted payment's metadata
+        // (verified in the live sandbox) — route via the hosted payment.
+        const hosted = await this.client_.fetchHostedPayment(payment.invoice_id);
+        sessionId = hosted.metadata?.session_id;
+      }
       if (typeof sessionId !== "string" || sessionId === "") {
         // Not a payment this provider created — nothing to route it to.
         return { action: "not_supported" };
@@ -540,6 +704,105 @@ export class MoyasarProviderService extends AbstractPaymentProvider<
     }
 
     return merged;
+  }
+
+  /**
+   * Session data carrying the hosted-payment identity, with the single-use
+   * fields cleared. The hosted `url` is re-added only while the hosted
+   * payment is still awaiting the customer.
+   */
+  private hostedBase(
+    data: MoyasarSessionData,
+    hosted: MoyasarHostedPayment,
+  ): MoyasarSessionData {
+    const base: MoyasarSessionData = {
+      ...data,
+      moyasar_hosted_payment_id: hosted.id,
+    };
+    delete base.source;
+    delete base.url;
+    return base;
+  }
+
+  /** Session data persisted back to Medusa after a hosted-payment call. */
+  private mergeHostedIntoData(
+    data: MoyasarSessionData,
+    hosted: MoyasarHostedPayment,
+  ): Record<string, unknown> {
+    const merged = this.hostedBase(data, hosted);
+    merged.status = hosted.status;
+    if (hosted.status === "initiated") {
+      merged.url = hosted.url;
+    }
+    return merged;
+  }
+
+  private toAuthorizeResultFromHosted(
+    hosted: MoyasarHostedPayment,
+    data: MoyasarSessionData,
+  ): AuthorizePaymentOutput {
+    const settled = settledPayment(hosted);
+    if (settled !== undefined) {
+      return this.toAuthorizeResult(settled, this.hostedBase(data, hosted));
+    }
+
+    const merged = this.mergeHostedIntoData(data, hosted);
+    switch (hosted.status) {
+      case "initiated":
+        return { status: "requires_more", data: merged };
+      case "paid":
+      case "refunded":
+        // Paid but the attempt list is missing — trust the hosted state.
+        return { status: "authorized", data: merged };
+      case "failed":
+        return { status: "error", data: merged };
+      case "canceled":
+      case "expired":
+      case "voided":
+        return { status: "canceled", data: merged };
+      case "on_hold":
+      default:
+        return { status: "pending", data: merged };
+    }
+  }
+
+  /**
+   * Cancel a hosted payment nobody paid yet (`PUT /invoices/:id/cancel`).
+   * Terminal states are an idempotent no-op; a paid hosted payment cannot be
+   * cancelled — strict callers get an error pointing at refunds, lenient
+   * (delete) callers get the merged state back.
+   */
+  private async cancelHosted(
+    data: MoyasarSessionData,
+    lenient: boolean,
+  ): Promise<{ data: Record<string, unknown> }> {
+    const hosted = await this.client_.fetchHostedPayment(
+      data.moyasar_hosted_payment_id!,
+    );
+    const settled = settledPayment(hosted);
+
+    if (settled !== undefined || hosted.status === "paid" || hosted.status === "refunded") {
+      if (lenient) {
+        return {
+          data:
+            settled !== undefined
+              ? this.mergePaymentIntoData(this.hostedBase(data, hosted), settled)
+              : this.mergeHostedIntoData(data, hosted),
+        };
+      }
+      throw new KsaError(
+        `cannot cancel — hosted payment ${hosted.id} was paid and Moyasar captures immediately. Issue a refund instead.`,
+        { prefix: MOYASAR_PREFIX, code: KsaErrorCodes.PROVIDER_ERROR },
+      );
+    }
+
+    if (hosted.status === "initiated" || hosted.status === "on_hold") {
+      const canceled = await this.client_.cancelHostedPayment(hosted.id);
+      return { data: this.mergeHostedIntoData(data, canceled) };
+    }
+
+    // canceled / expired / voided / failed — already terminal, no-op.
+    return { data: this.mergeHostedIntoData(data, hosted) };
   }
 
   private toAuthorizeResult(

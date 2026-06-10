@@ -112,6 +112,12 @@ export interface MoyasarPayment {
   created_at?: string;
   updated_at?: string;
   metadata?: Record<string, string> | null;
+  /**
+   * Set when the payment was made against a hosted payment. Hosted-page
+   * payments do **not** inherit the hosted payment's metadata (verified in
+   * the live sandbox), so this id is the only route back to the session.
+   */
+  invoice_id?: string | null;
   source?: MoyasarSource;
   [key: string]: unknown;
 }
@@ -135,6 +141,66 @@ export interface MoyasarCreatePaymentRequest {
 }
 
 /**
+ * Hosted-payment lifecycle states (Moyasar's Invoices API on the wire —
+ * verified against docs.moyasar.com).
+ */
+export type MoyasarHostedPaymentStatus =
+  | "initiated"
+  | "paid"
+  | "failed"
+  | "refunded"
+  | "canceled"
+  | "on_hold"
+  | "expired"
+  | "voided";
+
+/**
+ * A Moyasar hosted payment (`/invoices` resource). `url` is the
+ * gateway-hosted checkout page the storefront redirects the customer to;
+ * `payments` lists the attempts made against it. The customer pays on
+ * Moyasar's page, so no client SDK or PCI exposure is involved (ADR-0005).
+ */
+export interface MoyasarHostedPayment {
+  id: string;
+  status: MoyasarHostedPaymentStatus;
+  /** Amount in halalas. */
+  amount: number;
+  currency: string;
+  description?: string | null;
+  /** The hosted checkout page URL. */
+  url: string;
+  success_url?: string | null;
+  back_url?: string | null;
+  expired_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  metadata?: Record<string, string> | null;
+  /** Payment attempts; the paid one carries the money. */
+  payments?: MoyasarPayment[];
+  [key: string]: unknown;
+}
+
+/**
+ * Body for `POST /invoices` (verified against docs.moyasar.com and the live
+ * sandbox). `description` is required by Moyasar and shown to the customer on
+ * the hosted page. `success_url` redirects the customer back after paying —
+ * the hosted-flow equivalent of Flow A's 3-D Secure return. The invoice-level
+ * `callback_url` is deliberately not used: it posts an invoice object, not a
+ * payment webhook event, so Medusa's built-in webhook route could not parse it.
+ */
+export interface MoyasarCreateHostedPaymentRequest {
+  /** Amount in halalas (Moyasar minimum: 100). */
+  amount: number;
+  currency: string;
+  description: string;
+  /** Where the customer is redirected after paying on the hosted page. */
+  success_url?: string;
+  /** Where the customer is redirected when abandoning the hosted page. */
+  back_url?: string;
+  metadata?: Record<string, string>;
+}
+
+/**
  * The webhook envelope Moyasar POSTs to `/hooks/payment/moyasar_{id}`.
  * `secret_token` is the merchant-assigned shared secret — Moyasar does not
  * sign webhook bodies with an HMAC.
@@ -151,23 +217,29 @@ export interface MoyasarWebhookEvent {
 
 /**
  * The payment-session data contract between this provider and the storefront
- * (PRD §2). `initiatePayment` writes the first five fields; the storefront
- * writes back `source` + `callback_url` before authorization; the provider
- * adds `moyasar_payment_id` (+ `transaction_url` during 3-D Secure).
+ * (PRD §2). `initiatePayment` writes the base fields; the storefront writes
+ * back `callback_url` (both modes) and optionally a `source` (embedded mode);
+ * the provider adds `moyasar_hosted_payment_id` + `url` (hosted mode) or
+ * `moyasar_payment_id` (+ `transaction_url` during 3-D Secure).
  */
 export interface MoyasarSessionData {
   status?: string;
+  /** Present only when a publishable key is configured (embedded source path). */
   publishable_key?: string;
   /** Amount in halalas, converted once at the core boundary. */
   amount?: number;
   currency?: string;
   description?: string;
   session_id?: string;
-  /** Single-use token source written back by the storefront. */
+  /** Single-use token source written back by the storefront (embedded mode). */
   source?: Record<string, unknown>;
-  /** The storefront's 3-D Secure return route. */
+  /** The storefront's return route (3-D Secure / hosted-page redirect back). */
   callback_url?: string;
   moyasar_payment_id?: string;
+  /** Set once the hosted payment is created (hosted-redirect mode). */
+  moyasar_hosted_payment_id?: string;
+  /** Hosted checkout page URL, surfaced while the session requires more action. */
+  url?: string;
   /** 3-D Secure challenge URL, surfaced while the session requires more action. */
   transaction_url?: string;
   [key: string]: unknown;
