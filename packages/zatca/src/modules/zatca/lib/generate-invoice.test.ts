@@ -91,17 +91,25 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
 
     expect(record.icv).toBe(10);
     expect(record.pih).toBe(SEED_PIH);
-    expect(record.invoice_hash).toBe(GOLDEN_HASH);
+    expect(record.invoice_hash).toBe(computeInvoiceHash(record.xml));
 
     // ECDSA is randomized: substituting the golden SignatureValue (which
     // also changes QR tag 7) must reproduce the golden file byte-for-byte.
+    // The golden is normalized for BR-KSA-EN16931-06 (price-level charge
+    // indicator must be "false" live), which shifts the invoice digest.
     const freshSignature = /<ds:SignatureValue>([^<]+)/.exec(record.xml)![1]!;
     const goldenQr =
       /<cbc:ID>QR<\/cbc:ID>[\s\S]*?mimeCode="text\/plain">([^<]+)</.exec(goldenXml)![1]!;
     const normalized = record.xml
       .replace(freshSignature, GOLDEN_SIGNATURE)
       .replace(record.qr_code, goldenQr);
-    expect(normalized).toBe(goldenXml);
+    const normalizedGolden = goldenXml
+      .replaceAll(
+        "<cbc:ChargeIndicator>true</cbc:ChargeIndicator>",
+        "<cbc:ChargeIndicator>false</cbc:ChargeIndicator>",
+      )
+      .replace(GOLDEN_HASH, record.invoice_hash);
+    expect(normalized).toBe(normalizedGolden);
 
     expect(record).toMatchObject({
       order_id: "order_golden",
@@ -111,7 +119,7 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
     });
     // The QR is embedded in the XML and the hash survives signing.
     expect(record.xml).toContain(record.qr_code);
-    expect(computeInvoiceHash(record.xml)).toBe(GOLDEN_HASH);
+    expect(computeInvoiceHash(record.xml)).toBe(record.invoice_hash);
     // Persisted (inside the caller's transaction) before returning.
     expect(persisted).toEqual([record]);
   });

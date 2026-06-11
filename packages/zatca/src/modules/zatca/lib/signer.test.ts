@@ -119,21 +119,31 @@ describe("signInvoice (golden byte-match, ADR-0007)", () => {
 
   it("preserves the invoice hash (body untouched by signing)", () => {
     const { signedXml, invoiceHash } = sign();
-    expect(invoiceHash).toBe(GOLDEN_HASH);
-    expect(computeInvoiceHash(signedXml)).toBe(GOLDEN_HASH);
+    expect(invoiceHash).toBe(
+      computeInvoiceHash(buildSimplifiedInvoiceXml(goldenProps).xml),
+    );
+    expect(computeInvoiceHash(signedXml)).toBe(invoiceHash);
   });
 
   it("byte-matches the golden signed sample modulo the fresh ECDSA value and QR", () => {
-    const { signedXml, digitalSignature } = sign();
+    const { signedXml, digitalSignature, invoiceHash } = sign();
     // ECDSA is randomized: substituting the golden SignatureValue (and the
     // golden QR for the still-unstamped placeholder) must yield the golden
-    // file byte-for-byte — proving every other signing byte matches.
+    // file byte-for-byte — proving every other signing byte matches. The
+    // golden is normalized for BR-KSA-EN16931-06 (price-level charge
+    // indicator must be "false" live), which shifts the invoice digest.
     const goldenQr =
       /<cbc:ID>QR<\/cbc:ID>[\s\S]*?mimeCode="text\/plain">([^<]+)</.exec(goldenXml)![1]!;
     const normalized = signedXml
       .replace(digitalSignature, GOLDEN_SIGNATURE)
       .replace("SET_QR_CODE_DATA", goldenQr);
-    expect(normalized).toBe(goldenXml);
+    const normalizedGolden = goldenXml
+      .replaceAll(
+        "<cbc:ChargeIndicator>true</cbc:ChargeIndicator>",
+        "<cbc:ChargeIndicator>false</cbc:ChargeIndicator>",
+      )
+      .replace(GOLDEN_HASH, invoiceHash);
+    expect(normalized).toBe(normalizedGolden);
   });
 
   it("produces a fresh signature that verifies against the certificate", () => {

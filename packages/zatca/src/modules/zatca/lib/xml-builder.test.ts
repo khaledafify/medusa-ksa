@@ -16,6 +16,16 @@ const goldenXml = readFileSync(join(FIXTURES, "simplified-invoice.xml"), "utf8")
 /** Invoice hash of the golden sample, confirmed via `fatoora -generateHash`. */
 const GOLDEN_HASH = "Hss2gNFjBY5OJn/5CEVZSSNUMrSf4QlCMxwsioPN6fA=";
 
+/**
+ * The golden sample predates BR-KSA-EN16931-06 (the live Fatoora API rejects
+ * price-level AllowanceCharge with indicator "true"). The builder emits
+ * "false"; golden comparisons normalize that single known divergence.
+ */
+const normalizedGolden = goldenXml.replaceAll(
+  "<cbc:ChargeIndicator>true</cbc:ChargeIndicator>",
+  "<cbc:ChargeIndicator>false</cbc:ChargeIndicator>",
+);
+
 /** The golden sample's data, reconstructed as builder input. */
 const goldenProps: SimplifiedInvoiceProps = {
   serialNumber: "SME00010",
@@ -59,14 +69,14 @@ describe("invoice-hash (golden sample)", () => {
 });
 
 describe("buildSimplifiedInvoiceXml (golden byte-match, ADR-0007)", () => {
-  it("canonicalizes to the exact bytes of the golden sample", () => {
+  it("canonicalizes to the exact bytes of the golden sample (normalized)", () => {
     const { xml } = buildSimplifiedInvoiceXml(goldenProps);
-    expect(canonicalizeForHashing(xml)).toBe(canonicalizeForHashing(goldenXml));
+    expect(canonicalizeForHashing(xml)).toBe(canonicalizeForHashing(normalizedGolden));
   });
 
-  it("reproduces the SDK invoice hash from builder output", () => {
+  it("hashes identically to the normalized golden sample", () => {
     const { xml } = buildSimplifiedInvoiceXml(goldenProps);
-    expect(computeInvoiceHash(xml)).toBe(GOLDEN_HASH);
+    expect(computeInvoiceHash(xml)).toBe(computeInvoiceHash(normalizedGolden));
   });
 
   it("computes the golden totals in halalas", () => {
@@ -84,7 +94,11 @@ describe("buildSimplifiedInvoiceXml (general)", () => {
       customer: undefined,
       note: undefined,
     });
-    expect(xml).not.toContain("AccountingCustomerParty></cac:AccountingCustomerParty");
+    // UBL 2.1 requires the element; B2C keeps it empty (wes4m convention).
+    expect(xml).toContain(
+      "<cac:AccountingCustomerParty></cac:AccountingCustomerParty>",
+    );
+    expect(xml).not.toContain("PartyLegalEntity></cac:Party></cac:AccountingCustomerParty>");
     expect(xml).not.toContain("<cbc:Note");
     // still well-formed and hashable
     expect(computeInvoiceHash(xml)).toMatch(/^[A-Za-z0-9+/]{43}=$/);
@@ -136,6 +150,29 @@ describe("buildSimplifiedInvoiceXml (general)", () => {
     const { xml } = buildSimplifiedInvoiceXml(goldenProps);
     expect(xml).toContain("<ext:UBLExtensions>SET_UBL_EXTENSIONS_STRING</ext:UBLExtensions>");
     expect(xml).toContain("SET_QR_CODE_DATA");
+  });
+
+  it("builds a credit note with billing reference and instruction note", () => {
+    const { xml } = buildSimplifiedInvoiceXml({
+      ...goldenProps,
+      invoiceTypeCode: "381",
+      billingReference: "SME00010",
+      instructionNote: "Goods returned",
+    });
+    expect(xml).toContain('name="0200000">381</cbc:InvoiceTypeCode>');
+    expect(xml).toContain(
+      "<cac:BillingReference>\n        <cac:InvoiceDocumentReference>\n            <cbc:ID>Invoice Number: SME00010</cbc:ID>",
+    );
+    // InstructionNote stays inside PaymentMeans (BR-KSA-17).
+    expect(xml).toMatch(
+      /<cbc:PaymentMeansCode>10<\/cbc:PaymentMeansCode>\n {8}<cbc:InstructionNote>Goods returned<\/cbc:InstructionNote>\n {4}<\/cac:PaymentMeans>/,
+    );
+  });
+
+  it("plain invoices contain no billing reference or instruction note", () => {
+    const { xml } = buildSimplifiedInvoiceXml(goldenProps);
+    expect(xml).not.toContain("BillingReference");
+    expect(xml).not.toContain("InstructionNote");
   });
 });
 

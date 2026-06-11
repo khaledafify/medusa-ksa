@@ -77,6 +77,21 @@ tpl = replaceOnce(
   "SET_NOTE",
 );
 
+// ── 2b. Optional credit/debit-note blocks (empty for plain invoices) ────────
+// BillingReference (BR-KSA-56) slots between TaxCurrencyCode and the ICV
+// reference; filled with "" the template stays byte-identical to the golden.
+tpl = replaceOnce(
+  tpl,
+  "<cbc:TaxCurrencyCode>SAR</cbc:TaxCurrencyCode>\n    <cac:AdditionalDocumentReference>",
+  "<cbc:TaxCurrencyCode>SAR</cbc:TaxCurrencyCode>\nSET_BILLING_REFERENCE    <cac:AdditionalDocumentReference>",
+);
+// InstructionNote (KSA-10, BR-KSA-17) slots inside PaymentMeans.
+tpl = replaceOnce(
+  tpl,
+  "</cbc:PaymentMeansCode>\n    </cac:PaymentMeans>",
+  "</cbc:PaymentMeansCode>\nSET_INSTRUCTION_NOTE    </cac:PaymentMeans>",
+);
+
 // ── 3. ICV + PIH ─────────────────────────────────────────────────────────────
 tpl = replaceOnce(tpl, "<cbc:UUID>10</cbc:UUID>", "<cbc:UUID>SET_INVOICE_COUNTER</cbc:UUID>");
 tpl = replaceOnce(
@@ -190,6 +205,13 @@ lineTpl = replaceOnce(lineTpl, "<cbc:Name>كتاب</cbc:Name>", "<cbc:Name>SET_L
 lineTpl = replaceOnce(lineTpl, "<cbc:ID>S</cbc:ID>", "<cbc:ID>SET_CATEGORY_ID</cbc:ID>");
 lineTpl = replaceOnce(lineTpl, "<cbc:Percent>15.00</cbc:Percent>", "<cbc:Percent>SET_CATEGORY_PERCENT</cbc:Percent>");
 lineTpl = replaceOnce(lineTpl, '<cbc:PriceAmount currencyID="SAR">3.00</cbc:PriceAmount>', '<cbc:PriceAmount currencyID="SAR">SET_LINE_PRICE</cbc:PriceAmount>');
+// BR-KSA-EN16931-06 (enforced live): price-level AllowanceCharge indicator
+// may only be "false". The golden sample's "true" predates enforcement.
+lineTpl = replaceOnce(
+  lineTpl,
+  "<cbc:ChargeIndicator>true</cbc:ChargeIndicator>",
+  "<cbc:ChargeIndicator>false</cbc:ChargeIndicator>",
+);
 
 // ── Emit TS module ───────────────────────────────────────────────────────────
 const banner = `/**

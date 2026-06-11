@@ -74,6 +74,13 @@ export interface SimplifiedInvoiceProps {
   customer?: ZatcaCustomer;
   /** UN/ECE 4461 payment means code; "10" = cash. */
   paymentMeansCode?: string;
+  /**
+   * Serial of the invoice being credited/debited (BR-KSA-56). Required for
+   * credit (381) and debit (383) notes; omit for plain invoices.
+   */
+  billingReference?: string;
+  /** Reason for the credit/debit note (KSA-10, BR-KSA-17). */
+  instructionNote?: string;
   lines: ZatcaInvoiceLine[];
 }
 
@@ -229,10 +236,23 @@ export function buildSimplifiedInvoiceXml(
         SET_CUSTOMER_VAT_NUMBER: escapeXml(props.customer.vatNumber),
         SET_CUSTOMER_NAME: escapeXml(props.customer.name),
       })
-    : "";
+    : // UBL 2.1 makes the element mandatory; anonymous B2C keeps it empty.
+      "    <cac:AccountingCustomerParty></cac:AccountingCustomerParty>";
 
   const note = props.note
     ? `    <cbc:Note languageID="${escapeXml(props.note.languageId)}">${escapeXml(props.note.text)}</cbc:Note>\n`
+    : "";
+
+  const billingReference = props.billingReference
+    ? "    <cac:BillingReference>\n" +
+      "        <cac:InvoiceDocumentReference>\n" +
+      `            <cbc:ID>Invoice Number: ${escapeXml(props.billingReference)}</cbc:ID>\n` +
+      "        </cac:InvoiceDocumentReference>\n" +
+      "    </cac:BillingReference>\n"
+    : "";
+
+  const instructionNote = props.instructionNote
+    ? `        <cbc:InstructionNote>${escapeXml(props.instructionNote)}</cbc:InstructionNote>\n`
     : "";
 
   const xml = fill(SIMPLIFIED_INVOICE_TEMPLATE, {
@@ -254,7 +274,9 @@ export function buildSimplifiedInvoiceXml(
     SET_SUPPLIER_VAT_NUMBER: escapeXml(props.supplier.vatNumber),
     SET_SUPPLIER_NAME: escapeXml(props.supplier.name),
     SET_CUSTOMER_PARTY: customerParty,
+    SET_BILLING_REFERENCE: billingReference,
     SET_PAYMENT_MEANS_CODE: escapeXml(props.paymentMeansCode ?? "10"),
+    SET_INSTRUCTION_NOTE: instructionNote,
     SET_ALLOWANCE_TAX_CATEGORIES: allowanceCategories,
     SET_TAX_TOTAL: formatHalalas(taxHalalas),
     SET_TAX_SUBTOTALS: taxSubtotals,
