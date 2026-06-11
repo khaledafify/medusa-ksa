@@ -22,6 +22,20 @@ import { assertSimplifiedInvoiceReconciles } from "./tax-base";
  * stays outside the lock — the deferred engine picks pending invoices up.
  */
 
+export type ZatcaDocumentType = "invoice" | "credit_note" | "debit_note";
+export type ZatcaLifecycleSourceType =
+  | "order"
+  | "refund"
+  | "return"
+  | "order_cancel"
+  | "order_edit";
+
+const INVOICE_TYPE_CODE_BY_DOCUMENT_TYPE: Record<ZatcaDocumentType, string> = {
+  invoice: "388",
+  credit_note: "381",
+  debit_note: "383",
+};
+
 /** Builder input minus the chain-allocated fields; UUID minted if absent. */
 export interface GenerateInvoiceInput
   extends Omit<SimplifiedInvoiceProps, "icv" | "pih" | "uuid"> {
@@ -41,14 +55,26 @@ export interface GenerateInvoiceInput
   expectedTaxInclusiveHalalas?: number;
   /** Expected Medusa order VAT total; mismatch fails closed before signing/reporting. */
   expectedTaxHalalas?: number;
+  /** Legal document kind. Defaults to a Simplified tax invoice (388). */
+  documentType?: ZatcaDocumentType;
+  /** Lifecycle source used as the idempotency key. Defaults to `order`. */
+  sourceType?: ZatcaLifecycleSourceType;
+  /** Triggering entity id; defaults to `orderId` for original invoices. */
+  sourceId?: string;
+  /** Original invoice row id for credit/debit notes. */
+  parentInvoiceId?: string | null;
+  /** KSA-10 reason; mapped to cbc:InstructionNote for notes. */
+  reason?: string | null;
+  /** Exact line basis persisted for later lifecycle apportionment. */
+  linesSnapshot?: Record<string, unknown> | null;
 }
 
 /** Field-for-field shape of a pending `zatca_invoice` row. */
 export interface PendingZatcaInvoiceRecord {
   order_id: string;
-  document_type: "invoice" | "credit_note" | "debit_note";
+  document_type: ZatcaDocumentType;
   invoice_type: "simplified";
-  source_type: "order" | "refund" | "return" | "order_cancel" | "order_edit";
+  source_type: ZatcaLifecycleSourceType;
   source_id: string;
   parent_invoice_id: string | null;
   billing_reference: string | null;
@@ -63,6 +89,53 @@ export interface PendingZatcaInvoiceRecord {
   /** TLV 9-tag QR, base64. */
   qr_code: string;
   status: "pending";
+}
+
+function defaultLinesSnapshot(
+  lines: GenerateInvoiceInput["lines"],
+): Record<string, unknown> {
+  return {
+    lines: lines.map((line) => ({
+      id: line.id,
+      name: line.name,
+      quantity: line.quantity,
+      unitPriceHalalas: line.unitPriceHalalas,
+      lineExtensionHalalas: line.lineExtensionHalalas ?? null,
+      vatPercent: line.vatPercent,
+    })),
+  };
+}
+
+function assertLifecycleFields(
+  documentType: ZatcaDocumentType,
+  input: {
+    invoiceTypeCode?: string;
+    parentInvoiceId: string | null;
+    billingReference?: string;
+    reason: string | null;
+    instructionNote?: string;
+  },
+): void {
+  const expectedCode = INVOICE_TYPE_CODE_BY_DOCUMENT_TYPE[documentType];
+  if (input.invoiceTypeCode && input.invoiceTypeCode !== expectedCode) {
+    throw new Error(
+      `documentType ${documentType} must use InvoiceTypeCode ${expectedCode}, got ${input.invoiceTypeCode}`,
+    );
+  }
+
+  if (documentType === "invoice") {
+    return;
+  }
+
+  if (!input.parentInvoiceId) {
+    throw new Error(`${documentType} requires parentInvoiceId`);
+  }
+  if (!input.billingReference) {
+    throw new Error(`${documentType} requires billingReference`);
+  }
+  if (!input.reason && !input.instructionNote) {
+    throw new Error(`${documentType} requires reason`);
+  }
 }
 
 /**
@@ -87,14 +160,37 @@ export async function generatePendingInvoice(
     signingTime,
     expectedTaxInclusiveHalalas,
     expectedTaxHalalas,
+    documentType = "invoice",
+    sourceType = "order",
+    sourceId,
+    parentInvoiceId,
+    reason,
+    linesSnapshot,
     ...invoiceProps
   } = input;
+  const resolvedSourceId = sourceId ?? orderId;
+  const resolvedParentInvoiceId = parentInvoiceId ?? null;
+  const resolvedReason = reason ?? null;
+  assertLifecycleFields(documentType, {
+    invoiceTypeCode: invoiceProps.invoiceTypeCode,
+    parentInvoiceId: resolvedParentInvoiceId,
+    billingReference: invoiceProps.billingReference,
+    reason: resolvedReason,
+    instructionNote: invoiceProps.instructionNote,
+  });
 
   await acquireChainLock(ex, egsKey);
   const { icv, pih } = nextAllocation(await readChainHead(ex));
 
   const uuid = providedUuid ?? randomUUID();
-  const built = buildSimplifiedInvoiceXml({ ...invoiceProps, uuid, icv, pih });
+  const built = buildSimplifiedInvoiceXml({
+    ...invoiceProps,
+    invoiceTypeCode: INVOICE_TYPE_CODE_BY_DOCUMENT_TYPE[documentType],
+    instructionNote: invoiceProps.instructionNote ?? resolvedReason ?? undefined,
+    uuid,
+    icv,
+    pih,
+  });
   if (
     expectedTaxInclusiveHalalas !== undefined ||
     expectedTaxHalalas !== undefined
@@ -132,14 +228,14 @@ export async function generatePendingInvoice(
 
   const record: PendingZatcaInvoiceRecord = {
     order_id: orderId,
-    document_type: "invoice",
+    document_type: documentType,
     invoice_type: "simplified",
-    source_type: "order",
-    source_id: orderId,
-    parent_invoice_id: null,
-    billing_reference: null,
-    reason: null,
-    lines_snapshot: null,
+    source_type: sourceType,
+    source_id: resolvedSourceId,
+    parent_invoice_id: resolvedParentInvoiceId,
+    billing_reference: invoiceProps.billingReference ?? null,
+    reason: resolvedReason,
+    lines_snapshot: linesSnapshot ?? defaultLinesSnapshot(invoiceProps.lines),
     uuid,
     icv,
     pih,

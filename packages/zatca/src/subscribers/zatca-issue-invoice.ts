@@ -27,6 +27,13 @@ interface OrderView extends OrderGraphForZatcaTaxBase {
   status: string;
 }
 
+function linkedZatcaInvoiceIds(
+  value: { id: string } | { id: string }[] | null | undefined,
+): Set<string> {
+  if (!value) return new Set();
+  return new Set((Array.isArray(value) ? value : [value]).map((row) => row.id));
+}
+
 export default async function zatcaIssueInvoiceHandler({
   event,
   container,
@@ -150,9 +157,9 @@ export default async function zatcaIssueInvoiceHandler({
     filters: { id: orderId },
   });
   const existingLink = linked[0] as
-    | { zatca_invoice?: { id: string } | null }
+    | { zatca_invoice?: { id: string } | { id: string }[] | null }
     | undefined;
-  if (!existingLink?.zatca_invoice?.id) {
+  if (!linkedZatcaInvoiceIds(existingLink?.zatca_invoice).has(result.id)) {
     const link = container.resolve(ContainerRegistrationKeys.LINK);
     await link.create({
       [ZATCA_MODULE]: { zatca_invoice_id: result.id },

@@ -6,6 +6,7 @@ import {
   generatePendingInvoice,
   type GenerateInvoiceInput,
   type PendingZatcaInvoiceRecord,
+  type ZatcaLifecycleSourceType,
 } from "./lib/generate-invoice";
 import {
   onboardCompliance,
@@ -49,6 +50,34 @@ export interface ZatcaOnboardingStatus {
   vat_number?: string;
   org_name?: string;
   egs_serial_number?: string;
+}
+
+export type GenerateLifecycleDocumentInput = Omit<
+  GenerateInvoiceInput,
+  "egsKey" | "certificate" | "privateKey" | "supplier"
+>;
+
+type PersistedPendingZatcaInvoice = { id: string } & PendingZatcaInvoiceRecord;
+
+function sourceKey(input: GenerateLifecycleDocumentInput): {
+  source_type: ZatcaLifecycleSourceType;
+  source_id: string;
+} {
+  return {
+    source_type: input.sourceType ?? "order",
+    source_id: input.sourceId ?? input.orderId,
+  };
+}
+
+function isSourceKeyConflict(error: unknown): boolean {
+  const maybePgError = error as { code?: string; constraint?: string; message?: string };
+  const text = `${maybePgError.constraint ?? ""}\n${maybePgError.message ?? ""}\n${String(error)}`;
+  return (
+    maybePgError.code === "23505" &&
+    (text.includes("IDX_zatca_invoice_source_type_source_id_unique") ||
+      text.includes("zatca_invoice_source_type_source_id_key") ||
+      (text.includes("source_type") && text.includes("source_id")))
+  );
 }
 
 /**
@@ -171,22 +200,13 @@ class ZatcaModuleService extends MedusaService({
     );
   }
 
-  /**
-   * Generate, sign, QR-stamp, and persist the one invoice for an order
-   * (S5, ADR-0004): the advisory lock + allocation + persist all run inside
-   * one DB transaction; ZATCA submission stays outside. Idempotent — an
-   * existing invoice for the order source is returned untouched (unique
-   * `(source_type, source_id)` backstops races at the DB level).
-   */
-  async generateInvoiceForOrder(
-    input: Omit<GenerateInvoiceInput, "egsKey" | "certificate" | "privateKey" | "supplier">,
-  ): Promise<{ id: string } & PendingZatcaInvoiceRecord> {
-    const [existing] = await this.listZatcaInvoices(
-      { source_type: "order", source_id: input.orderId },
-      { take: 1 },
-    );
+  async generateLifecycleDocument(
+    input: GenerateLifecycleDocumentInput,
+  ): Promise<PersistedPendingZatcaInvoice> {
+    const key = sourceKey(input);
+    const [existing] = await this.listZatcaInvoices(key, { take: 1 });
     if (existing) {
-      return existing as { id: string } & PendingZatcaInvoiceRecord;
+      return existing as PersistedPendingZatcaInvoice;
     }
 
     const { row, privateKey } = await this.decryptProductionCredentials();
@@ -197,28 +217,64 @@ class ZatcaModuleService extends MedusaService({
         { prefix: "zatca", code: KsaErrorCodes.INVALID_INPUT },
       );
     }
-
-    return this.manager.transactional(async (txEm) => {
-      const ex = {
-        execute: (sql: string, params?: unknown[]) => txEm.execute(sql, params),
-      };
-      let created: { id: string } & PendingZatcaInvoiceRecord = null as never;
-      await generatePendingInvoice(
-        ex,
-        {
-          ...input,
-          egsKey: row.id,
-          certificate: row.certificate!,
-          privateKey,
-          supplier,
-        },
-        async (record) => {
-          created = (await this.createZatcaInvoices(record, {
-            transactionManager: txEm,
-          })) as { id: string } & PendingZatcaInvoiceRecord;
-        },
+    if (!row.certificate) {
+      throw new KsaError(
+        "EGS credential has no Production CSID certificate — complete onboarding first.",
+        { prefix: "zatca", code: KsaErrorCodes.INVALID_INPUT },
       );
-      return created;
+    }
+    const certificate = row.certificate;
+
+    try {
+      return await this.manager.transactional(async (txEm) => {
+        const ex = {
+          execute: (sql: string, params?: unknown[]) => txEm.execute(sql, params),
+        };
+        let created: PersistedPendingZatcaInvoice = null as never;
+        await generatePendingInvoice(
+          ex,
+          {
+            ...input,
+            egsKey: row.id,
+            certificate,
+            privateKey,
+            supplier,
+          },
+          async (record) => {
+            created = (await this.createZatcaInvoices(record, {
+              transactionManager: txEm,
+            })) as PersistedPendingZatcaInvoice;
+          },
+        );
+        return created;
+      });
+    } catch (error) {
+      if (!isSourceKeyConflict(error)) throw error;
+
+      const [racedExisting] = await this.listZatcaInvoices(key, { take: 1 });
+      if (racedExisting) {
+        return racedExisting as PersistedPendingZatcaInvoice;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Generate, sign, QR-stamp, and persist the original invoice for an order
+   * (S5, ADR-0004): the advisory lock + allocation + persist all run inside
+   * one DB transaction; ZATCA submission stays outside. Idempotent on the
+   * `("order", orderId)` source key.
+   */
+  async generateInvoiceForOrder(
+    input: GenerateLifecycleDocumentInput,
+  ): Promise<PersistedPendingZatcaInvoice> {
+    return this.generateLifecycleDocument({
+      ...input,
+      documentType: "invoice",
+      sourceType: "order",
+      sourceId: input.orderId,
+      parentInvoiceId: null,
+      reason: null,
     });
   }
 

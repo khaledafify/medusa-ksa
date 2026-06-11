@@ -74,7 +74,8 @@ export default async function testZatcaSubscriber({ container }: ExecArgs) {
     filters: { id: order.id },
   });
   const linked = data[0]?.zatca_invoice;
-  if (!linked || linked.id !== invoice.id) {
+  const linkedList = Array.isArray(linked) ? linked : linked ? [linked] : [];
+  if (!linkedList.some((row) => row.id === invoice.id)) {
     throw new Error("order → zatca_invoice link not traversable");
   }
 

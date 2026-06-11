@@ -12,6 +12,9 @@ import ZatcaModule from "../modules/zatca";
  * is enforced on `ZatcaInvoice.source_type + source_id`, not `order_id`.
  */
 export default defineLink(
-  ZatcaModule.linkable.zatcaInvoice,
+  {
+    linkable: ZatcaModule.linkable.zatcaInvoice,
+    isList: true,
+  },
   OrderModule.linkable.order,
 );

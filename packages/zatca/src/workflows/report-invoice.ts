@@ -7,7 +7,7 @@ import {
 
 import { ZATCA_MODULE } from "../modules/zatca";
 import type ZatcaModuleService from "../modules/zatca/service";
-import type { GenerateInvoiceInput } from "../modules/zatca/lib/generate-invoice";
+import type { GenerateLifecycleDocumentInput } from "../modules/zatca/service";
 
 /**
  * `report-invoice` workflow (S5, SPEC §4): generate + persist the signed,
@@ -17,16 +17,13 @@ import type { GenerateInvoiceInput } from "../modules/zatca/lib/generate-invoice
  * is never affected.
  */
 
-export type ReportInvoiceWorkflowInput = Omit<
-  GenerateInvoiceInput,
-  "egsKey" | "certificate" | "privateKey" | "supplier"
->;
+export type ReportInvoiceWorkflowInput = GenerateLifecycleDocumentInput;
 
-const generateInvoiceStep = createStep(
-  "zatca-generate-invoice",
+const generateLifecycleDocumentStep = createStep(
+  "zatca-generate-lifecycle-document",
   async (input: ReportInvoiceWorkflowInput, { container }) => {
     const service: ZatcaModuleService = container.resolve(ZATCA_MODULE);
-    const invoice = await service.generateInvoiceForOrder(input);
+    const invoice = await service.generateLifecycleDocument(input);
     return new StepResponse({ invoiceId: invoice.id, status: invoice.status });
   },
 );
@@ -50,7 +47,7 @@ const reportInvoiceStep = createStep(
 export const reportInvoiceWorkflow = createWorkflow(
   "zatca-report-invoice",
   function (input: ReportInvoiceWorkflowInput) {
-    const generated = generateInvoiceStep(input);
+    const generated = generateLifecycleDocumentStep(input);
     const reported = reportInvoiceStep({ invoiceId: generated.invoiceId });
     return new WorkflowResponse(reported);
   },

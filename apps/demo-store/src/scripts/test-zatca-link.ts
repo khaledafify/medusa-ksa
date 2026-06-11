@@ -7,8 +7,8 @@ import type { ZatcaModuleService } from "medusa-plugin-zatca/modules/zatca";
 
 /**
  * T1.4 gate: the ZatcaInvoice ↔ Order Module Link is synced and queryable.
- * Creates an order + a ZatcaInvoice, links them, reads the order back through
- * query.graph() from the invoice side, then cleans up.
+ * Creates an order + multiple ZatcaInvoice rows, links them, reads the order
+ * back through query.graph() from both sides, then cleans up.
  *
  * Run: ../../node_modules/.bin/medusa exec ./src/scripts/test-zatca-link.ts
  */
@@ -31,21 +31,59 @@ export default async function testZatcaLink({ container }: ExecArgs) {
     ],
   });
 
+  const suffix = Date.now().toString(16).slice(-12).padStart(12, "0");
   const invoice = await zatcaService.createZatcaInvoices({
     order_id: order.id,
-    uuid: `00000000-0000-4000-8000-${Date.now().toString().padStart(12, "0")}`,
+    document_type: "invoice",
+    source_type: "order",
+    source_id: order.id,
+    lines_snapshot: { lines: [] },
+    uuid: `00000000-0000-4000-8000-${suffix}`,
     icv: Math.floor(Date.now() / 1000),
     pih: "test-pih",
     invoice_hash: "test-hash",
     xml: "<Invoice/>",
   });
+  const creditNote1 = await zatcaService.createZatcaInvoices({
+    order_id: order.id,
+    document_type: "credit_note",
+    source_type: "refund",
+    source_id: `refund_${suffix}`,
+    parent_invoice_id: invoice.id,
+    billing_reference: `INV-${order.id}`,
+    reason: "Refund",
+    lines_snapshot: { lines: [] },
+    uuid: `11111111-1111-4111-8111-${suffix}`,
+    icv: invoice.icv + 1,
+    pih: "test-hash",
+    invoice_hash: "test-credit-hash-1",
+    xml: "<Invoice/>",
+  });
+  const creditNote2 = await zatcaService.createZatcaInvoices({
+    order_id: order.id,
+    document_type: "credit_note",
+    source_type: "return",
+    source_id: `return_${suffix}`,
+    parent_invoice_id: invoice.id,
+    billing_reference: `INV-${order.id}`,
+    reason: "Return received",
+    lines_snapshot: { lines: [] },
+    uuid: `22222222-2222-4222-8222-${suffix}`,
+    icv: invoice.icv + 2,
+    pih: "test-credit-hash-1",
+    invoice_hash: "test-credit-hash-2",
+    xml: "<Invoice/>",
+  });
+  const documents = [invoice, creditNote1, creditNote2];
 
   try {
     // Order must match defineLink: zatcaInvoice first, then order.
-    await link.create({
-      zatca: { zatca_invoice_id: invoice.id },
-      [Modules.ORDER]: { order_id: order.id },
-    });
+    for (const document of documents) {
+      await link.create({
+        zatca: { zatca_invoice_id: document.id },
+        [Modules.ORDER]: { order_id: order.id },
+      });
+    }
 
     const { data } = await query.graph({
       entity: "zatca_invoice",
@@ -66,12 +104,37 @@ export default async function testZatcaLink({ container }: ExecArgs) {
     console.log(
       `link verified: zatca_invoice ${row.id} -> order ${row.order.id}`,
     );
-  } finally {
-    await link.dismiss({
-      zatca: { zatca_invoice_id: invoice.id },
-      [Modules.ORDER]: { order_id: order.id },
+
+    const { data: orderRows } = await query.graph({
+      entity: "order",
+      fields: ["id", "zatca_invoice.id", "zatca_invoice.document_type"],
+      filters: { id: order.id },
     });
-    await zatcaService.deleteZatcaInvoices(invoice.id);
+    const linkedDocuments = orderRows[0]?.zatca_invoice;
+    const linkedList = Array.isArray(linkedDocuments)
+      ? linkedDocuments
+      : linkedDocuments
+        ? [linkedDocuments]
+        : [];
+    const linkedIds = new Set(linkedList.map((doc) => doc.id));
+    for (const document of documents) {
+      if (!linkedIds.has(document.id)) {
+        throw new Error(`order is missing linked document ${document.id}`);
+      }
+    }
+    if (linkedList.length !== documents.length) {
+      throw new Error(
+        `expected ${documents.length} linked ZATCA documents, got ${linkedList.length}`,
+      );
+    }
+  } finally {
+    for (const document of documents) {
+      await link.dismiss({
+        zatca: { zatca_invoice_id: document.id },
+        [Modules.ORDER]: { order_id: order.id },
+      });
+      await zatcaService.deleteZatcaInvoices(document.id);
+    }
     await orderService.deleteOrders(order.id);
   }
 

@@ -3,7 +3,16 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { Pool, type PoolClient } from "pg";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   generatePendingInvoice,
@@ -180,6 +189,62 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
     ).rejects.toThrow(/reconciliation_mismatch/);
     expect(persisted).toHaveLength(0);
   });
+
+  it("carries credit-note lifecycle metadata into the row and XML", async () => {
+    const record = await generatePendingInvoice(
+      fakeExecutor(null),
+      {
+        ...goldenInput,
+        uuid: "11111111-1111-4111-8111-111111111111",
+        serialNumber: "CN-1001",
+        documentType: "credit_note",
+        sourceType: "refund",
+        sourceId: "refund_1001",
+        parentInvoiceId: "zatinv_original",
+        billingReference: "INV-1001",
+        reason: "Refund",
+        linesSnapshot: {
+          lines: [
+            {
+              id: 1,
+              name: "كتاب",
+              quantity: 1,
+              unitPriceHalalas: 300,
+              vatPercent: 15,
+            },
+          ],
+        },
+      },
+      noopPersist,
+    );
+
+    expect(record).toMatchObject({
+      order_id: "order_golden",
+      document_type: "credit_note",
+      invoice_type: "simplified",
+      source_type: "refund",
+      source_id: "refund_1001",
+      parent_invoice_id: "zatinv_original",
+      billing_reference: "INV-1001",
+      reason: "Refund",
+      status: "pending",
+    });
+    expect(record.lines_snapshot).toEqual({
+      lines: [
+        {
+          id: 1,
+          name: "كتاب",
+          quantity: 1,
+          unitPriceHalalas: 300,
+          vatPercent: 15,
+        },
+      ],
+    });
+    expect(record.xml).toContain("<cbc:InvoiceTypeCode");
+    expect(record.xml).toContain(">381</cbc:InvoiceTypeCode>");
+    expect(record.xml).toContain("<cbc:ID>INV-1001</cbc:ID>");
+    expect(record.xml).toContain("<cbc:InstructionNote>Refund</cbc:InstructionNote>");
+  });
 });
 
 describe("secret hygiene (PRD §6 credential-security gate)", () => {
@@ -285,7 +350,11 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
     await pool.end();
   });
 
-  const generateForOrder = async (orderId: string) => {
+  beforeEach(async () => {
+    await pool.query(`truncate table ${schema}.zatca_invoice`);
+  });
+
+  const generateDocument = async (input: GenerateInvoiceInput) => {
     const client = await pool.connect();
     try {
       await client.query(`set search_path to ${schema}`);
@@ -293,7 +362,7 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
       const ex = executor(client);
       const record = await generatePendingInvoice(
         ex,
-        { ...goldenInput, uuid: undefined, orderId },
+        input,
         async (r) => {
           await client.query(
             `insert into zatca_invoice
@@ -333,10 +402,125 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
     }
   };
 
+  it("persists one invoice and multiple notes for the same order by source key", async () => {
+    const orderId = "order_lifecycle";
+    const invoice = await generateDocument({
+      ...goldenInput,
+      uuid: "22222222-2222-4222-8222-222222222222",
+      orderId,
+      serialNumber: "INV-LIFE-1",
+    });
+    const parentInvoiceId = `zatinv_${invoice.icv}`;
+
+    await generateDocument({
+      ...goldenInput,
+      uuid: "33333333-3333-4333-8333-333333333333",
+      orderId,
+      serialNumber: "CN-LIFE-1",
+      documentType: "credit_note",
+      sourceType: "refund",
+      sourceId: "refund_lifecycle_1",
+      parentInvoiceId,
+      billingReference: "INV-LIFE-1",
+      reason: "Refund",
+    });
+    await generateDocument({
+      ...goldenInput,
+      uuid: "44444444-4444-4444-8444-444444444444",
+      orderId,
+      serialNumber: "CN-LIFE-2",
+      documentType: "credit_note",
+      sourceType: "return",
+      sourceId: "return_lifecycle_1",
+      parentInvoiceId,
+      billingReference: "INV-LIFE-1",
+      reason: "Return received",
+    });
+
+    const { rows } = await pool.query<{
+      document_type: string;
+      source_type: string;
+      source_id: string;
+      parent_invoice_id: string | null;
+      billing_reference: string | null;
+      reason: string | null;
+    }>(
+      `select document_type, source_type, source_id, parent_invoice_id,
+              billing_reference, reason
+         from ${schema}.zatca_invoice
+        where order_id = $1
+        order by icv asc`,
+      [orderId],
+    );
+
+    expect(rows).toEqual([
+      {
+        document_type: "invoice",
+        source_type: "order",
+        source_id: orderId,
+        parent_invoice_id: null,
+        billing_reference: null,
+        reason: null,
+      },
+      {
+        document_type: "credit_note",
+        source_type: "refund",
+        source_id: "refund_lifecycle_1",
+        parent_invoice_id: parentInvoiceId,
+        billing_reference: "INV-LIFE-1",
+        reason: "Refund",
+      },
+      {
+        document_type: "credit_note",
+        source_type: "return",
+        source_id: "return_lifecycle_1",
+        parent_invoice_id: parentInvoiceId,
+        billing_reference: "INV-LIFE-1",
+        reason: "Return received",
+      },
+    ]);
+  }, 30_000);
+
   it("parallel generations persist a correctly linked, signed pending chain", async () => {
-    const N = 8;
+    const inputs: GenerateInvoiceInput[] = Array.from({ length: 8 }, (_, i) => {
+      if (i % 3 === 1) {
+        return {
+          ...goldenInput,
+          uuid: undefined,
+          orderId: `order_mixed_${i}`,
+          serialNumber: `CN-MIXED-${i}`,
+          documentType: "credit_note",
+          sourceType: "refund",
+          sourceId: `refund_mixed_${i}`,
+          parentInvoiceId: "zatinv_original",
+          billingReference: "INV-ORIGINAL",
+          reason: "Refund",
+        };
+      }
+      if (i % 3 === 2) {
+        return {
+          ...goldenInput,
+          uuid: undefined,
+          orderId: `order_mixed_${i}`,
+          serialNumber: `DN-MIXED-${i}`,
+          documentType: "debit_note",
+          sourceType: "order_edit",
+          sourceId: `edit_mixed_${i}`,
+          parentInvoiceId: "zatinv_original",
+          billingReference: "INV-ORIGINAL",
+          reason: "Order edit increase",
+        };
+      }
+      return {
+        ...goldenInput,
+        uuid: undefined,
+        orderId: `order_mixed_${i}`,
+        serialNumber: `INV-MIXED-${i}`,
+      };
+    });
+
     await Promise.all(
-      Array.from({ length: N }, (_, i) => generateForOrder(`order_${i}`)),
+      inputs.map((input) => generateDocument(input)),
     );
 
     const { rows } = await pool.query<{
@@ -346,13 +530,19 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
       xml: string;
       qr_code: string;
       status: string;
+      document_type: string;
     }>(
-      `select icv, pih, invoice_hash, xml, qr_code, status from ${schema}.zatca_invoice order by icv asc`,
+      `select icv, pih, invoice_hash, xml, qr_code, status, document_type
+         from ${schema}.zatca_invoice
+        where order_id like 'order_mixed_%'
+        order by icv asc`,
     );
 
-    expect(rows).toHaveLength(N);
-    rows.forEach((row, idx) => {
-      expect(row.icv).toBe(idx + 1);
+    expect(rows).toHaveLength(inputs.length);
+    expect(new Set(rows.map((row) => row.document_type))).toEqual(
+      new Set(["invoice", "credit_note", "debit_note"]),
+    );
+    rows.forEach((row) => {
       expect(row.status).toBe("pending");
       // Signed and QR-stamped; stored hash is the real hash of the stored XML.
       expect(row.xml).toContain("<ds:SignatureValue>");
