@@ -68,6 +68,9 @@ importers:
       medusa-payment-moyasar:
         specifier: workspace:*
         version: link:../../packages/payments/moyasar
+      medusa-plugin-zatca:
+        specifier: workspace:*
+        version: link:../../packages/zatca
       pg:
         specifier: ^8.13.0
         version: 8.21.0

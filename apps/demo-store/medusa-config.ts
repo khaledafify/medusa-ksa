@@ -14,6 +14,19 @@ export default defineConfig({
       cookieSecret: process.env.COOKIE_SECRET || "supersecret",
     },
   },
+  plugins: [
+    {
+      // ZATCA e-invoicing (custom module + workflows + admin wizard).
+      // Non-secret bootstrap only — EGS credentials are generated through
+      // onboarding and stored encrypted, never in env (SPEC §6).
+      resolve: "medusa-plugin-zatca",
+      options: {
+        environment: process.env.ZATCA_ENV ?? "sandbox",
+        encryptionKey: process.env.ZATCA_ENCRYPTION_KEY,
+        trigger: process.env.ZATCA_TRIGGER ?? "payment_captured",
+      },
+    },
+  ],
   modules: [
     {
       // Re-declare the Payment module to register the Moyasar provider.
