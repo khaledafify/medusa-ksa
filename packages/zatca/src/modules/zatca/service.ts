@@ -1,7 +1,7 @@
 import { MedusaService } from "@medusajs/framework/utils";
 
-import ZatcaCredential from "./models/zatca-credential.js";
-import ZatcaInvoice from "./models/zatca-invoice.js";
+import ZatcaCredential from "./models/zatca-credential";
+import ZatcaInvoice from "./models/zatca-invoice";
 
 /**
  * Main module service. `MedusaService` auto-generates the CRUD surface for

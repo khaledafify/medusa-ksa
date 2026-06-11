@@ -2,7 +2,12 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": ".medusa/server",
-    "rootDir": "."
+    "rootDir": ".",
+    // This package compiles to CommonJS (no "type": "module"): Medusa's
+    // plugin tooling (plugin:db:generate) require()s raw .ts sources, which
+    // is impossible in an ESM-typed package. verbatimModuleSyntax forbids
+    // `import` syntax in CJS emit, so it is relaxed here only.
+    "verbatimModuleSyntax": false
   },
   "include": ["src", "vitest.config.ts"],
   "exclude": [".medusa", "node_modules"]
