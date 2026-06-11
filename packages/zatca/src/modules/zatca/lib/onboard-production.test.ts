@@ -100,7 +100,7 @@ describe("onboardProduction (T4.5 gate — PCSID encrypted, no leaks)", () => {
     );
 
     const logged = spies
-      .flatMap((spy) => spy.mock.calls.flat())
+      .flatMap((spy) => spy.mock.calls.flat() as unknown[])
       .map(String)
       .join("\n");
     expect(logged).not.toContain(PCSID_SECRET);

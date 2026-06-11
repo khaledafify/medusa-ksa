@@ -124,7 +124,7 @@ describe("onboardCompliance (T4.3 gate — CCSID encrypted at rest, no leaks)", 
     });
 
     const logged = [logSpy, errSpy, warnSpy]
-      .flatMap((spy) => spy.mock.calls.flat())
+      .flatMap((spy) => spy.mock.calls.flat() as unknown[])
       .map(String)
       .join("\n");
     expect(logged).not.toContain(API_SECRET);
