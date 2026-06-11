@@ -18,6 +18,9 @@ build/
 !.env.example
 *.pem
 *.key
+# Public ZATCA SDK sample material (test vectors, not secrets)
+!packages/zatca/test/fixtures/sdk/sample-cert.pem
+!packages/zatca/test/fixtures/sdk/sample-priv-key.pem
 
 # ───────────────────────────── Logs ─────────────────────────────────────
 *.log
