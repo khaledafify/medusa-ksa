@@ -82,6 +82,20 @@ _Avoid_: token, card, payment method.
 The session state when a payment can't complete server-side alone and the customer must be redirected (e.g. a 3-D Secure challenge). The provider surfaces a redirect URL; the final outcome is confirmed by webhook, never by the browser return.
 _Avoid_: pending (too generic), redirect.
 
+## Fulfillment
+
+**Courier**:
+The actual carrier that physically delivers a shipment (SMSA, Aramex, iMile…). An **aggregator** exposes several couriers through one API; in this suite each courier surfaces as its own fulfillment option.
+_Avoid_: carrier (acceptable but prefer courier), shipping company, provider (reserve "provider" for the Medusa provider).
+
+**Rate shopping**:
+Querying the aggregator for a shipment's price across couriers so each can be compared/priced live at checkout.
+_Avoid_: quote, pricing, estimate.
+
+**Fulfillment option**:
+A shippable choice the provider exposes via `getFulfillmentOptions` (here, one per courier) that an admin attaches to a Medusa **Shipping Option**.
+_Avoid_: shipping method, service, carrier service.
+
 ## Configuration
 
 **Sandbox**:
