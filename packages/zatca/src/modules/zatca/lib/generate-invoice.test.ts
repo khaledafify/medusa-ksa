@@ -113,7 +113,10 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
 
     expect(record).toMatchObject({
       order_id: "order_golden",
+      document_type: "invoice",
       invoice_type: "simplified",
+      source_type: "order",
+      source_id: "order_golden",
       uuid: goldenInput.uuid,
       status: "pending",
     });
@@ -237,15 +240,23 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
     await pool.query(
       `create table ${schema}.zatca_invoice (
          id text primary key,
-         order_id text not null unique,
+         order_id text not null,
+         document_type text not null,
          invoice_type text not null,
+         source_type text not null,
+         source_id text not null,
+         parent_invoice_id text,
+         billing_reference text,
+         reason text,
+         lines_snapshot jsonb,
          uuid text not null unique,
          icv integer not null unique,
          pih text not null,
          invoice_hash text not null,
          xml text not null,
          qr_code text,
-         status text not null
+         status text not null,
+         unique (source_type, source_id)
        )`,
     );
   });
@@ -267,12 +278,21 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
         async (r) => {
           await client.query(
             `insert into zatca_invoice
-               (id, order_id, invoice_type, uuid, icv, pih, invoice_hash, xml, qr_code, status)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+               (id, order_id, document_type, invoice_type, source_type, source_id,
+                parent_invoice_id, billing_reference, reason, lines_snapshot,
+                uuid, icv, pih, invoice_hash, xml, qr_code, status)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
             [
               `zatinv_${r.icv}`,
               r.order_id,
+              r.document_type,
               r.invoice_type,
+              r.source_type,
+              r.source_id,
+              r.parent_invoice_id,
+              r.billing_reference,
+              r.reason,
+              JSON.stringify(r.lines_snapshot),
               r.uuid,
               r.icv,
               r.pih,

@@ -41,7 +41,14 @@ export interface GenerateInvoiceInput
 /** Field-for-field shape of a pending `zatca_invoice` row. */
 export interface PendingZatcaInvoiceRecord {
   order_id: string;
+  document_type: "invoice" | "credit_note" | "debit_note";
   invoice_type: "simplified";
+  source_type: "order" | "refund" | "return" | "order_cancel" | "order_edit";
+  source_id: string;
+  parent_invoice_id: string | null;
+  billing_reference: string | null;
+  reason: string | null;
+  lines_snapshot: Record<string, unknown> | null;
   uuid: string;
   icv: number;
   pih: string;
@@ -102,7 +109,14 @@ export async function generatePendingInvoice(
 
   const record: PendingZatcaInvoiceRecord = {
     order_id: orderId,
+    document_type: "invoice",
     invoice_type: "simplified",
+    source_type: "order",
+    source_id: orderId,
+    parent_invoice_id: null,
+    billing_reference: null,
+    reason: null,
+    lines_snapshot: null,
     uuid,
     icv,
     pih,

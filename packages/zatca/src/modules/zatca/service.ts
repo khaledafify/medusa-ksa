@@ -175,14 +175,14 @@ class ZatcaModuleService extends MedusaService({
    * Generate, sign, QR-stamp, and persist the one invoice for an order
    * (S5, ADR-0004): the advisory lock + allocation + persist all run inside
    * one DB transaction; ZATCA submission stays outside. Idempotent — an
-   * existing invoice for the order is returned untouched (unique `order_id`
-   * backstops races at the DB level).
+   * existing invoice for the order source is returned untouched (unique
+   * `(source_type, source_id)` backstops races at the DB level).
    */
   async generateInvoiceForOrder(
     input: Omit<GenerateInvoiceInput, "egsKey" | "certificate" | "privateKey" | "supplier">,
   ): Promise<{ id: string } & PendingZatcaInvoiceRecord> {
     const [existing] = await this.listZatcaInvoices(
-      { order_id: input.orderId },
+      { source_type: "order", source_id: input.orderId },
       { take: 1 },
     );
     if (existing) {

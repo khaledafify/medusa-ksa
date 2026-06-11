@@ -1,13 +1,13 @@
 import { model } from "@medusajs/framework/utils";
 
 /**
- * One ZATCA invoice per Medusa order, associated via a Module Link
+ * ZATCA documents for a Medusa order, associated via a Module Link
  * (src/links/zatca-invoice-order.ts) — never a foreign key (ADR-0001).
  *
  * v1 is B2C only (ADR-0006): every invoice is `simplified` and goes through
  * Reporting. ICV/PIH form the legal hash chain (ADR-0004) — `icv` is unique
- * per EGS (single EGS in v1 → globally unique), and `order_id` is unique so a
- * re-fired trigger can never mint a second invoice for the same order.
+ * per EGS (single EGS in v1 → globally unique). Idempotency is keyed by the
+ * lifecycle source so one order can have one invoice and multiple notes.
  */
 const ZatcaInvoice = model
   .define("zatca_invoice", {
@@ -16,6 +16,24 @@ const ZatcaInvoice = model
     order_id: model.text(),
     /** v1 ships B2C only; `standard` (B2B) is future work. */
     invoice_type: model.enum(["simplified"]).default("simplified"),
+    /** Document kind; all use the UBL Invoice root. */
+    document_type: model
+      .enum(["invoice", "credit_note", "debit_note"])
+      .default("invoice"),
+    /** Lifecycle source that triggered this document. */
+    source_type: model
+      .enum(["order", "refund", "return", "order_cancel", "order_edit"])
+      .default("order"),
+    /** Triggering entity id: order id, refund id, return id, or edit id. */
+    source_id: model.text(),
+    /** Original invoice row for credit/debit notes. */
+    parent_invoice_id: model.text().nullable(),
+    /** Bare original serial for BR-KSA-56; null for original invoices. */
+    billing_reference: model.text().nullable(),
+    /** KSA-10 reason/instruction note for credit/debit notes. */
+    reason: model.text().nullable(),
+    /** Auditable line snapshot used for later lifecycle apportionment. */
+    lines_snapshot: model.json().nullable(),
     /** UUID v4 embedded in the UBL document. */
     uuid: model.text(),
     /** Invoice Counter Value — sequential per EGS, from 1. */
@@ -39,10 +57,13 @@ const ZatcaInvoice = model
     attempts: model.number().default(0),
   })
   .indexes([
-    { on: ["order_id"], unique: true },
+    { on: ["order_id"] },
+    { on: ["source_type", "source_id"], unique: true },
     { on: ["icv"], unique: true },
     { on: ["uuid"], unique: true },
     { on: ["status"] },
+    { on: ["parent_invoice_id"] },
+    { on: ["status", "document_type"] },
   ]);
 
 export default ZatcaInvoice;
