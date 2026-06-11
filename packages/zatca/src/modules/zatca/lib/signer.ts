@@ -77,9 +77,14 @@ export interface CertificateInfo {
   serialNumber: string;
 }
 
+/** Parse a certificate given as a bare base64 body or a full PEM. */
+export function parseCertificate(certificate: string): X509Certificate {
+  return new X509Certificate(toPem(certificate, "CERTIFICATE"));
+}
+
 export function getCertificateInfo(certificate: string): CertificateInfo {
   const body = pemBody(certificate);
-  const x509 = new X509Certificate(toPem(certificate, "CERTIFICATE"));
+  const x509 = parseCertificate(certificate);
   return {
     body,
     hash: hexSha256Base64(body),
@@ -90,7 +95,7 @@ export function getCertificateInfo(certificate: string): CertificateInfo {
 
 /** Public key of the signing certificate (for signature verification). */
 export function certificatePublicKey(certificate: string): KeyObject {
-  return new X509Certificate(toPem(certificate, "CERTIFICATE")).publicKey;
+  return parseCertificate(certificate).publicKey;
 }
 
 /**

@@ -234,9 +234,9 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
       // Stored hash is the real hash of the stored XML.
       expect(row.invoice_hash).toBe(computeInvoiceHash(row.xml));
     });
-    expect(rows[0].pih).toBe(SEED_PIH);
+    expect(rows[0]!.pih).toBe(SEED_PIH);
     for (let i = 1; i < rows.length; i++) {
-      expect(rows[i].pih).toBe(rows[i - 1].invoice_hash);
+      expect(rows[i]!.pih).toBe(rows[i - 1]!.invoice_hash);
     }
   }, 30_000);
 });
