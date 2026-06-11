@@ -117,6 +117,9 @@ export default tseslint.config(
   {
     files: ["**/*.{js,cjs,mjs}"],
     extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      globals: { console: "readonly", process: "readonly" },
+    },
   },
 
   // MUST be last: turn off every rule that conflicts with Prettier's formatting.

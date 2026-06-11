@@ -8,6 +8,8 @@
   "bugs": "https://github.com/khaledafify/medusa-ksa/issues",
   "dependencies": {
     "@medusa-ksa/core": "workspace:*",
+    "@xmldom/xmldom": "^0.9.10",
+    "xmldsigjs": "^2.8.7",
     "zod": "^3.23.8"
   },
   "devDependencies": {
