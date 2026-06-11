@@ -9,9 +9,17 @@ import { onboardEgsWorkflow, reportInvoiceWorkflow } from "medusa-plugin-zatca/w
 import type { ZatcaModuleService } from "medusa-plugin-zatca/modules/zatca";
 import { ensureZatcaInvoiceOrderLink } from "medusa-plugin-zatca/lib/zatca-order-link";
 import {
+  deriveSimplifiedInvoiceTaxBase,
+  type DerivedSimplifiedInvoiceTaxBase,
+  type OrderGraphForZatcaTaxBase,
+  ZATCA_CURRENCY,
   ZATCA_DOCUMENT_TYPE,
   ZATCA_INVOICE_STATUS,
   ZATCA_LIFECYCLE_SOURCE_TYPE,
+  ZATCA_NOTE_REASON,
+  ZATCA_ORIGINAL_INVOICE_ORDER_FIELDS,
+  ZATCA_QUERY_ENTITY,
+  ZATCA_VAT,
 } from "medusa-plugin-zatca/modules/zatca";
 import { issueCancellationCreditNote } from "medusa-plugin-zatca/subscribers/zatca-cancel-credit-note";
 import { issueOrderEditNote } from "medusa-plugin-zatca/subscribers/zatca-order-edit-note";
@@ -25,6 +33,7 @@ import { issueReturnCreditNote } from "medusa-plugin-zatca/subscribers/zatca-ret
  * original invoice for each, then drives the same lifecycle functions used by
  * the subscribers with deterministic event graph data:
  *
+ * - real tax-inclusive order graph -> reported 388
  * - capture/original invoice -> reported 388
  * - partial refund -> reported credit note 381
  * - full refund on a second order -> reported credit note 381
@@ -69,7 +78,7 @@ interface LifecycleLine {
   vatPercent: number;
 }
 
-const VAT_PERCENT = 15;
+const VAT_PERCENT = ZATCA_VAT.DEFAULT_PERCENT;
 
 const supplier = {
   crn: "1010010000",
@@ -162,7 +171,7 @@ function orderGraph(orderId: string, netHalalas: number) {
   const taxHalalas = vatOf(netHalalas, VAT_PERCENT);
   return {
     id: orderId,
-    currency_code: "sar",
+    currency_code: ZATCA_CURRENCY.SAR_LOWERCASE,
     status: "completed",
     total: sar(netHalalas + taxHalalas),
     tax_total: sar(taxHalalas),
@@ -229,9 +238,66 @@ async function createDemoOrder(container: ExecArgs["container"], label: string) 
   };
   const token = randomUUID().slice(0, 8);
   return orderModule.createOrders({
-    currency_code: "sar",
+    currency_code: ZATCA_CURRENCY.SAR_LOWERCASE,
     email: `zatca-lifecycle-${token}@example.com`,
     items: [{ title: label, quantity: 1, unit_price: 10 }],
+  });
+}
+
+async function createTaxInclusiveOrder(container: ExecArgs["container"]) {
+  const orderModule = container.resolve(Modules.ORDER) as {
+    createOrders(input: Record<string, unknown>): Promise<DemoOrder>;
+  };
+  const token = randomUUID().slice(0, 8);
+  return orderModule.createOrders({
+    currency_code: ZATCA_CURRENCY.SAR_LOWERCASE,
+    email: `zatca-inclusive-${token}@example.com`,
+    items: [
+      {
+        title: "Inclusive discounted taxable item",
+        quantity: 2,
+        unit_price: 115,
+        is_tax_inclusive: true,
+        tax_lines: [
+          {
+            code: `vat-${ZATCA_VAT.DEFAULT_PERCENT}`,
+            rate: ZATCA_VAT.DEFAULT_PERCENT,
+          },
+        ],
+        adjustments: [
+          {
+            code: `zatca-inclusive-discount-${token}`,
+            amount: 23,
+            description: "Inclusive line discount",
+          },
+        ],
+      },
+      {
+        title: "Inclusive zero-rate item",
+        quantity: 1,
+        unit_price: 50,
+        is_tax_inclusive: true,
+        tax_lines: [
+          {
+            code: `vat-${ZATCA_VAT.ZERO_PERCENT}`,
+            rate: ZATCA_VAT.ZERO_PERCENT,
+          },
+        ],
+      },
+    ],
+    shipping_methods: [
+      {
+        name: "Inclusive delivery",
+        amount: 11.5,
+        is_tax_inclusive: true,
+        tax_lines: [
+          {
+            code: `vat-${ZATCA_VAT.DEFAULT_PERCENT}`,
+            rate: ZATCA_VAT.DEFAULT_PERCENT,
+          },
+        ],
+      },
+    ],
   });
 }
 
@@ -341,6 +407,30 @@ function assertReturnLineAccurate(row: ZatcaInvoiceRow, expectedQuantity: number
   }
 }
 
+function assertSnapshotTotals(
+  row: ZatcaInvoiceRow,
+  taxBase: DerivedSimplifiedInvoiceTaxBase,
+): void {
+  const snapshot = row.lines_snapshot as
+    | {
+        totals?: {
+          taxInclusiveHalalas?: unknown;
+          taxHalalas?: unknown;
+        };
+      }
+    | null;
+  const taxInclusive = Number(snapshot?.totals?.taxInclusiveHalalas);
+  const tax = Number(snapshot?.totals?.taxHalalas);
+  if (taxInclusive !== taxBase.expectedTaxInclusiveHalalas) {
+    throw new Error(
+      `${row.id} TaxInclusiveAmount ${taxInclusive}; expected ${taxBase.expectedTaxInclusiveHalalas}`,
+    );
+  }
+  if (tax !== taxBase.expectedTaxHalalas) {
+    throw new Error(`${row.id} TaxAmount ${tax}; expected ${taxBase.expectedTaxHalalas}`);
+  }
+}
+
 export default async function e2eZatcaLifecycle({ container }: ExecArgs) {
   const service: InstanceType<typeof ZatcaModuleService> =
     container.resolve("zatca");
@@ -355,6 +445,46 @@ export default async function e2eZatcaLifecycle({ container }: ExecArgs) {
   await ensureProductionEgs(container, service);
 
   const reportedRows: ZatcaInvoiceRow[] = [];
+
+  const inclusiveOrder = await createTaxInclusiveOrder(container);
+  const { data: inclusiveOrders } = await query.graph({
+    entity: ZATCA_QUERY_ENTITY.ORDER,
+    fields: [...ZATCA_ORIGINAL_INVOICE_ORDER_FIELDS],
+    filters: { id: inclusiveOrder.id },
+  });
+  const inclusiveOrderGraph = inclusiveOrders[0] as
+    | (OrderGraphForZatcaTaxBase & { display_id?: number })
+    | undefined;
+  if (!inclusiveOrderGraph) {
+    throw new Error(`tax-inclusive order ${inclusiveOrder.id} was not resolved`);
+  }
+  const inclusiveTaxBase = deriveSimplifiedInvoiceTaxBase(inclusiveOrderGraph);
+  const inclusiveParts = issueParts();
+  const inclusiveSerialNumber = `INV-INCL-${Date.now()}-${randomUUID().slice(0, 6)}`;
+  const { result: inclusiveResult } = await reportInvoiceWorkflow(container).run({
+    input: {
+      orderId: inclusiveOrder.id,
+      serialNumber: inclusiveSerialNumber,
+      issueDate: inclusiveParts.issueDate,
+      issueTime: inclusiveParts.issueTime,
+      lines: inclusiveTaxBase.lines,
+      documentAllowances: inclusiveTaxBase.documentAllowances,
+      documentCharges: inclusiveTaxBase.documentCharges,
+      expectedTaxInclusiveHalalas: inclusiveTaxBase.expectedTaxInclusiveHalalas,
+      expectedTaxHalalas: inclusiveTaxBase.expectedTaxHalalas,
+    },
+  });
+  const inclusiveInvoice = await service.retrieveZatcaInvoice(
+    inclusiveResult.id,
+  ) as ZatcaInvoiceRow;
+  assertReportedDocument(inclusiveInvoice, {
+    documentType: ZATCA_DOCUMENT_TYPE.INVOICE,
+    sourceType: ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER,
+    sourceId: inclusiveOrder.id,
+  });
+  assertSnapshotTotals(inclusiveInvoice, inclusiveTaxBase);
+  await ensureZatcaInvoiceOrderLink(container, inclusiveOrder.id, inclusiveResult.id);
+  reportedRows.push(inclusiveInvoice);
 
   const createInvoice = async (label: string, linesForOrder: LifecycleLine[]) => {
     const order = await createDemoOrder(container, label);
@@ -468,7 +598,7 @@ export default async function e2eZatcaLifecycle({ container }: ExecArgs) {
           {
             id: returnId,
             order_id: returned.order.id,
-            reason: "Return received",
+            reason: ZATCA_NOTE_REASON.RETURN_RECEIVED,
             items: [
               {
                 item_id: `${returned.order.id}:line-a`,

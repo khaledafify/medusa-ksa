@@ -11,6 +11,7 @@ export const ZATCA_MODULE = "zatca";
 
 export { default as ZatcaModuleService } from "./service";
 export * from "./lib/lifecycle";
+export * from "./lib/tax-base";
 export * from "./types";
 
 export default Module(ZATCA_MODULE, {

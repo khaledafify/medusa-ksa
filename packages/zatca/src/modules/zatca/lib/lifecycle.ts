@@ -93,6 +93,7 @@ export const ZATCA_INVOICE_TYPE_NAME = {
 
 export const ZATCA_VAT = {
   DEFAULT_PERCENT: 15,
+  ZERO_PERCENT: 0,
 } as const;
 
 export const ZATCA_ALLOWANCE_CHARGE_REASON = {

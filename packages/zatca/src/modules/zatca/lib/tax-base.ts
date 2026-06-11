@@ -102,13 +102,27 @@ function quantityOf(item: OrderItemView): number {
   return money(item.detail?.quantity ?? item.quantity);
 }
 
-function unitHalalasFromSubtotal(item: OrderItemView): number {
+function taxableExHalalas(
+  total: unknown,
+  taxTotal: unknown,
+  label: string,
+): number {
+  const taxable = halalas(money(total) - money(taxTotal));
+  if (taxable < 0) {
+    throw new Error(`${label}: taxable ex-tax amount must be non-negative`);
+  }
+  return taxable;
+}
+
+function unitHalalasFromLineExtension(
+  item: OrderItemView,
+  lineExtensionHalalas: number,
+): number {
   const quantity = quantityOf(item);
   if (!Number.isFinite(quantity) || quantity <= 0) {
     throw new Error(`order item ${item.id}: quantity must be positive`);
   }
-  const subtotal = money(item.subtotal ?? money(item.unit_price) * quantity);
-  return sarToHalalas(subtotal / quantity);
+  return Math.round(lineExtensionHalalas / quantity);
 }
 
 export function deriveSimplifiedInvoiceTaxBase(
@@ -120,9 +134,17 @@ export function deriveSimplifiedInvoiceTaxBase(
 
   (order.items ?? []).forEach((item, idx) => {
     const vatPercent = rateOf(item.tax_lines);
+    const pricingMode = item.is_tax_inclusive ? "tax-inclusive" : "tax-exclusive";
+    const taxableAfterDiscountHalalas = taxableExHalalas(
+      item.total,
+      item.tax_total,
+      `order item ${item.id} (${pricingMode})`,
+    );
     const discountExHalalas = halalas(
       money(item.discount_total) - money(item.discount_tax_total),
     );
+    const lineExtensionHalalas =
+      taxableAfterDiscountHalalas + discountExHalalas;
     if (discountExHalalas > 0) {
       const key = String(vatPercent);
       const existing = documentAllowances.get(key);
@@ -138,15 +160,23 @@ export function deriveSimplifiedInvoiceTaxBase(
       sourceItemId: item.id,
       name: item.title,
       quantity: quantityOf(item),
-      unitPriceHalalas: unitHalalasFromSubtotal(item),
-      lineExtensionHalalas: halalas(item.subtotal),
+      // Medusa's probe-confirmed final total/tax_total fields are config-
+      // agnostic for inclusive and exclusive pricing. Strategy-B discounts
+      // still require pre-discount line extension, so reconstruct it from the
+      // final ex-tax taxable base plus the ex-tax document allowance.
+      unitPriceHalalas: unitHalalasFromLineExtension(item, lineExtensionHalalas),
+      lineExtensionHalalas,
       vatPercent,
     });
   });
 
   (order.shipping_methods ?? []).forEach((method) => {
     const vatPercent = rateOf(method.tax_lines);
-    const taxableHalalas = halalas(money(method.total) - money(method.tax_total));
+    const taxableHalalas = taxableExHalalas(
+      method.total,
+      method.tax_total,
+      "shipping method",
+    );
     if (taxableHalalas <= 0) return;
     const key = String(vatPercent);
     const existing = documentCharges.get(key);

@@ -5,6 +5,10 @@ import {
   deriveSimplifiedInvoiceTaxBase,
 } from "./tax-base";
 import { buildSimplifiedInvoiceXml } from "./xml-builder";
+import {
+  ZATCA_ALLOWANCE_CHARGE_REASON,
+  ZATCA_ERROR_CODE,
+} from "./lifecycle";
 
 describe("deriveSimplifiedInvoiceTaxBase", () => {
   it("derives ex-tax document allowance from Medusa's tax-inclusive discount totals", () => {
@@ -46,7 +50,7 @@ describe("deriveSimplifiedInvoiceTaxBase", () => {
       {
         amountHalalas: 2000,
         vatPercent: 15,
-        reason: "discount",
+        reason: ZATCA_ALLOWANCE_CHARGE_REASON.DISCOUNT,
       },
     ]);
     expect(derived.documentCharges).toEqual([]);
@@ -89,7 +93,7 @@ describe("deriveSimplifiedInvoiceTaxBase", () => {
       {
         amountHalalas: 1000,
         vatPercent: 15,
-        reason: "shipping",
+        reason: ZATCA_ALLOWANCE_CHARGE_REASON.SHIPPING,
       },
     ]);
     expect(derived.expectedTaxInclusiveHalalas).toBe(12650);
@@ -128,6 +132,83 @@ describe("deriveSimplifiedInvoiceTaxBase", () => {
     expect(derived.expectedTaxHalalas).toBe(1500);
   });
 
+  it("derives tax-inclusive discounted lines from final Medusa totals instead of subtotal", () => {
+    const taxBase = deriveSimplifiedInvoiceTaxBase({
+      id: "order_inclusive_final_totals",
+      total: 215.05,
+      tax_total: 28.05,
+      items: [
+        {
+          id: "ordli_inclusive_discounted",
+          title: "Inclusive discounted taxable item",
+          quantity: 2,
+          unit_price: 115,
+          is_tax_inclusive: true,
+          subtotal: 230,
+          total: 203.55,
+          tax_total: 26.55,
+          discount_total: 26.45,
+          discount_tax_total: 3.45,
+          tax_lines: [{ rate: 15, total: 26.55, subtotal: 30 }],
+          detail: { quantity: 2 },
+        },
+      ],
+      shipping_methods: [
+        {
+          total: 11.5,
+          tax_total: 1.5,
+          tax_lines: [{ rate: 15, total: 1.5 }],
+        },
+      ],
+    });
+    const built = buildSimplifiedInvoiceXml({
+      serialNumber: "INV-INCLUSIVE-FINALS",
+      uuid: "8e6000cf-1a98-4174-b3e7-b5d5954bc10d",
+      issueDate: "2026-06-11",
+      issueTime: "12:00:00",
+      icv: 1,
+      pih: "seed",
+      supplier: {
+        crn: "1010010000",
+        street: "Prince Sultan",
+        building: "2322",
+        citySubdivision: "Al-Murabba",
+        city: "Riyadh",
+        postalZone: "23333",
+        vatNumber: "399999999900003",
+        name: "Maximum Speed Tech Supply LTD",
+      },
+      lines: taxBase.lines,
+      documentAllowances: taxBase.documentAllowances,
+      documentCharges: taxBase.documentCharges,
+    });
+
+    expect(taxBase.lines[0]).toMatchObject({
+      unitPriceHalalas: 10000,
+      lineExtensionHalalas: 20000,
+    });
+    expect(taxBase.documentAllowances).toEqual([
+      {
+        amountHalalas: 2300,
+        vatPercent: 15,
+        reason: ZATCA_ALLOWANCE_CHARGE_REASON.DISCOUNT,
+      },
+    ]);
+    expect(taxBase.documentCharges).toEqual([
+      {
+        amountHalalas: 1000,
+        vatPercent: 15,
+        reason: ZATCA_ALLOWANCE_CHARGE_REASON.SHIPPING,
+      },
+    ]);
+    expect(built.taxExclusiveHalalas).toBe(18700);
+    expect(built.taxHalalas).toBe(2805);
+    expect(built.taxInclusiveHalalas).toBe(21505);
+    expect(() =>
+      assertSimplifiedInvoiceReconciles(built, taxBase),
+    ).not.toThrow();
+  });
+
   it("rejects a built document whose totals do not reconcile to the order", () => {
     const expected = {
       expectedTaxInclusiveHalalas: 11500,
@@ -144,7 +225,7 @@ describe("deriveSimplifiedInvoiceTaxBase", () => {
         { taxInclusiveHalalas: 11600, taxHalalas: 1500 },
         expected,
       ),
-    ).toThrow(/reconciliation_mismatch/);
+    ).toThrow(ZATCA_ERROR_CODE.RECONCILIATION_MISMATCH);
   });
 
   it("maps a discount plus shipping order into a reconciled invoice build", () => {
