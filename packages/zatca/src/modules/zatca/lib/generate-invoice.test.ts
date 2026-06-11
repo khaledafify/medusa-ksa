@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { Pool, type PoolClient } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   generatePendingInvoice,
@@ -11,13 +11,19 @@ import {
   type PendingZatcaInvoiceRecord,
 } from "./generate-invoice";
 import { type ChainHead, SEED_PIH, type SqlExecutor } from "./hash-chain";
-import { canonicalizeForHashing, computeInvoiceHash } from "./invoice-hash";
+import { computeInvoiceHash } from "./invoice-hash";
 
 const FIXTURES = join(__dirname, "../../../../test/fixtures/sdk");
 const goldenXml = readFileSync(join(FIXTURES, "simplified-invoice.xml"), "utf8");
+const sampleCert = readFileSync(join(FIXTURES, "sample-cert.pem"), "utf8");
+const sampleKey = readFileSync(join(FIXTURES, "sample-priv-key.pem"), "utf8");
 
 /** Invoice hash of the golden sample, confirmed via `fatoora -generateHash`. */
 const GOLDEN_HASH = "Hss2gNFjBY5OJn/5CEVZSSNUMrSf4QlCMxwsioPN6fA=";
+/** SignatureValue and SigningTime embedded in the golden sample. */
+const GOLDEN_SIGNATURE =
+  "MEUCIQCs+DNQ1vlz7JoovA7JRjakn4tUs0JlCcAoJNh/J65FHwIgKppt2+DfcLXtKQ6yR49tcVydgs/MSY2yV9vATzcpUq4=";
+const GOLDEN_SIGNING_TIME = "2024-01-14T10:26:49";
 
 /** Golden sample data as generate-path input (ICV/PIH come from the chain). */
 const goldenInput: GenerateInvoiceInput = {
@@ -29,6 +35,9 @@ const goldenInput: GenerateInvoiceInput = {
   issueTime: "17:41:08",
   invoiceTypeName: "0200000",
   note: { languageId: "ar", text: "ABC" },
+  certificate: sampleCert,
+  privateKey: sampleKey,
+  signingTime: GOLDEN_SIGNING_TIME,
   supplier: {
     crn: "1010010000",
     street: "الامير سلطان | Prince Sultan",
@@ -66,8 +75,10 @@ function fakeExecutor(head: ChainHead | null): SqlExecutor {
   };
 }
 
-describe("generatePendingInvoice (golden gate)", () => {
-  it("allocates ICV/PIH from the chain and reproduces the golden XML + hash", async () => {
+const noopPersist = () => Promise.resolve();
+
+describe("generatePendingInvoice (end-to-end golden gate)", () => {
+  it("full pipeline byte-matches the golden signed sample modulo the fresh ECDSA value", async () => {
     // Head at ICV 9 whose hash is the golden PIH → next allocation is the
     // golden sample's exact chain position (ICV 10, seed PIH).
     const ex = fakeExecutor({ icv: 9, invoiceHash: SEED_PIH });
@@ -81,15 +92,26 @@ describe("generatePendingInvoice (golden gate)", () => {
     expect(record.icv).toBe(10);
     expect(record.pih).toBe(SEED_PIH);
     expect(record.invoice_hash).toBe(GOLDEN_HASH);
-    expect(canonicalizeForHashing(record.xml)).toBe(canonicalizeForHashing(goldenXml));
+
+    // ECDSA is randomized: substituting the golden SignatureValue (which
+    // also changes QR tag 7) must reproduce the golden file byte-for-byte.
+    const freshSignature = /<ds:SignatureValue>([^<]+)/.exec(record.xml)![1]!;
+    const goldenQr =
+      /<cbc:ID>QR<\/cbc:ID>[\s\S]*?mimeCode="text\/plain">([^<]+)</.exec(goldenXml)![1]!;
+    const normalized = record.xml
+      .replace(freshSignature, GOLDEN_SIGNATURE)
+      .replace(record.qr_code, goldenQr);
+    expect(normalized).toBe(goldenXml);
 
     expect(record).toMatchObject({
       order_id: "order_golden",
       invoice_type: "simplified",
       uuid: goldenInput.uuid,
       status: "pending",
-      qr_code: null,
     });
+    // The QR is embedded in the XML and the hash survives signing.
+    expect(record.xml).toContain(record.qr_code);
+    expect(computeInvoiceHash(record.xml)).toBe(GOLDEN_HASH);
     // Persisted (inside the caller's transaction) before returning.
     expect(persisted).toEqual([record]);
   });
@@ -98,7 +120,7 @@ describe("generatePendingInvoice (golden gate)", () => {
     const record = await generatePendingInvoice(
       fakeExecutor(null),
       goldenInput,
-      () => Promise.resolve(),
+      noopPersist,
     );
     expect(record.icv).toBe(1);
     expect(record.pih).toBe(SEED_PIH);
@@ -110,7 +132,7 @@ describe("generatePendingInvoice (golden gate)", () => {
     const record = await generatePendingInvoice(
       fakeExecutor(null),
       withoutUuid,
-      () => Promise.resolve(),
+      noopPersist,
     );
     expect(record.uuid).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
@@ -121,16 +143,69 @@ describe("generatePendingInvoice (golden gate)", () => {
   it("does not persist when the build fails", async () => {
     const persisted: PendingZatcaInvoiceRecord[] = [];
     await expect(
-      generatePendingInvoice(
-        fakeExecutor(null),
-        { ...goldenInput, lines: [] },
-        (r) => {
-          persisted.push(r);
-          return Promise.resolve();
-        },
-      ),
+      generatePendingInvoice(fakeExecutor(null), { ...goldenInput, lines: [] }, (r) => {
+        persisted.push(r);
+        return Promise.resolve();
+      }),
     ).rejects.toThrow();
     expect(persisted).toHaveLength(0);
+  });
+});
+
+describe("secret hygiene (PRD §6 credential-security gate)", () => {
+  const keyBody = sampleKey.trim();
+  const consoleSpies = (["log", "info", "warn", "error", "debug"] as const).map(
+    (level) => vi.spyOn(console, level),
+  );
+
+  afterEach(() => {
+    consoleSpies.forEach((spy) => spy.mockClear());
+  });
+
+  const allConsoleOutput = () =>
+    consoleSpies
+      .flatMap((spy) => spy.mock.calls)
+      .flat()
+      .map(String)
+      .join("\n");
+
+  it("never logs and never embeds the private key on the happy path", async () => {
+    const record = await generatePendingInvoice(
+      fakeExecutor(null),
+      goldenInput,
+      noopPersist,
+    );
+    expect(record.xml).not.toContain(keyBody);
+    expect(record.qr_code).not.toContain(keyBody);
+    expect(JSON.stringify(record)).not.toContain(keyBody);
+    expect(allConsoleOutput()).not.toContain(keyBody);
+  });
+
+  it("never leaks the private key through errors (build, sign, persist)", async () => {
+    const failures: Promise<unknown>[] = [
+      // build failure
+      generatePendingInvoice(fakeExecutor(null), { ...goldenInput, lines: [] }, noopPersist),
+      // sign failure (corrupt key still must not surface its bytes)
+      generatePendingInvoice(
+        fakeExecutor(null),
+        { ...goldenInput, privateKey: "not-a-key" },
+        noopPersist,
+      ),
+      // persist failure
+      generatePendingInvoice(fakeExecutor(null), goldenInput, () =>
+        Promise.reject(new Error("insert failed")),
+      ),
+    ];
+    for (const failure of failures) {
+      try {
+        await failure;
+        expect.unreachable("should have thrown");
+      } catch (err) {
+        expect(String(err)).not.toContain(keyBody);
+        expect(JSON.stringify(err) ?? "").not.toContain(keyBody);
+      }
+    }
+    expect(allConsoleOutput()).not.toContain(keyBody);
   });
 });
 
@@ -211,7 +286,7 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
     }
   };
 
-  it("parallel generations persist a correctly linked pending chain", async () => {
+  it("parallel generations persist a correctly linked, signed pending chain", async () => {
     const N = 8;
     await Promise.all(
       Array.from({ length: N }, (_, i) => generateForOrder(`order_${i}`)),
@@ -222,16 +297,19 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
       pih: string;
       invoice_hash: string;
       xml: string;
+      qr_code: string;
       status: string;
     }>(
-      `select icv, pih, invoice_hash, xml, status from ${schema}.zatca_invoice order by icv asc`,
+      `select icv, pih, invoice_hash, xml, qr_code, status from ${schema}.zatca_invoice order by icv asc`,
     );
 
     expect(rows).toHaveLength(N);
     rows.forEach((row, idx) => {
       expect(row.icv).toBe(idx + 1);
       expect(row.status).toBe("pending");
-      // Stored hash is the real hash of the stored XML.
+      // Signed and QR-stamped; stored hash is the real hash of the stored XML.
+      expect(row.xml).toContain("<ds:SignatureValue>");
+      expect(row.xml).toContain(row.qr_code);
       expect(row.invoice_hash).toBe(computeInvoiceHash(row.xml));
     });
     expect(rows[0]!.pih).toBe(SEED_PIH);

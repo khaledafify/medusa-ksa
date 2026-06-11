@@ -9,6 +9,6 @@
     // `import` syntax in CJS emit, so it is relaxed here only.
     "verbatimModuleSyntax": false
   },
-  "include": ["src", "vitest.config.ts"],
+  "include": ["src", "scripts", "vitest.config.ts"],
   "exclude": [".medusa", "node_modules"]
 }

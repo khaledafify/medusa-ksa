@@ -6,17 +6,19 @@ import {
   readChainHead,
   type SqlExecutor,
 } from "./hash-chain";
-import { computeInvoiceHash } from "./invoice-hash";
+import { generateQr } from "./qr";
+import { signInvoice } from "./signer";
 import {
   buildSimplifiedInvoiceXml,
+  formatHalalas,
   type SimplifiedInvoiceProps,
 } from "./xml-builder";
 
 /**
- * S2 generate path (ADR-0004): under the per-EGS chain lock,
- * allocate ICV/PIH → build UBL XML → hash → persist a **pending**
- * ZatcaInvoice. Signing + QR slot in between hash and persist in S3;
- * ZATCA submission always stays outside the lock.
+ * Generate pipeline (ADR-0004): under the per-EGS chain lock,
+ * allocate ICV/PIH → build UBL XML → hash → sign (XAdES) → stamp QR →
+ * persist a **pending** ZatcaInvoice. ZATCA submission (Reporting) always
+ * stays outside the lock — the deferred engine picks pending invoices up.
  */
 
 /** Builder input minus the chain-allocated fields; UUID minted if absent. */
@@ -28,6 +30,12 @@ export interface GenerateInvoiceInput
   egsKey: string;
   /** KSA-1 UUID; minted (v4) when not provided. */
   uuid?: string;
+  /** Signing certificate — CSID-issued (base64 body or PEM). */
+  certificate: string;
+  /** secp256k1 private key (base64 SEC1 body or PEM). Never logged. */
+  privateKey: string;
+  /** Signing-time override for reproducible tests; defaults to now. */
+  signingTime?: string;
 }
 
 /** Field-for-field shape of a pending `zatca_invoice` row. */
@@ -38,14 +46,15 @@ export interface PendingZatcaInvoiceRecord {
   icv: number;
   pih: string;
   invoice_hash: string;
-  /** Unsigned UBL XML in S2 — replaced by the signed document in S3. */
+  /** Signed, QR-stamped UBL XML. */
   xml: string;
-  qr_code: null;
+  /** TLV 9-tag QR, base64. */
+  qr_code: string;
   status: "pending";
 }
 
 /**
- * Generate and persist one pending invoice at the next chain position.
+ * Generate and persist one signed pending invoice at the next chain position.
  *
  * MUST run inside an open transaction: the advisory lock is
  * transaction-scoped, and `persist` must write through the same
@@ -57,13 +66,39 @@ export async function generatePendingInvoice(
   input: GenerateInvoiceInput,
   persist: (record: PendingZatcaInvoiceRecord) => Promise<void>,
 ): Promise<PendingZatcaInvoiceRecord> {
-  const { orderId, egsKey, uuid: providedUuid, ...invoiceProps } = input;
+  const {
+    orderId,
+    egsKey,
+    uuid: providedUuid,
+    certificate,
+    privateKey,
+    signingTime,
+    ...invoiceProps
+  } = input;
 
   await acquireChainLock(ex, egsKey);
   const { icv, pih } = nextAllocation(await readChainHead(ex));
 
   const uuid = providedUuid ?? randomUUID();
-  const { xml } = buildSimplifiedInvoiceXml({ ...invoiceProps, uuid, icv, pih });
+  const built = buildSimplifiedInvoiceXml({ ...invoiceProps, uuid, icv, pih });
+
+  const { signedXml, invoiceHash, digitalSignature } = signInvoice({
+    xml: built.xml,
+    certificate,
+    privateKey,
+    signingTime,
+  });
+
+  const qrCode = generateQr({
+    sellerName: invoiceProps.supplier.name,
+    vatNumber: invoiceProps.supplier.vatNumber,
+    issueDateTime: `${invoiceProps.issueDate}T${invoiceProps.issueTime}`,
+    taxInclusiveTotal: formatHalalas(built.taxInclusiveHalalas),
+    vatTotal: formatHalalas(built.taxHalalas),
+    invoiceHash,
+    digitalSignature,
+    certificate,
+  });
 
   const record: PendingZatcaInvoiceRecord = {
     order_id: orderId,
@@ -71,9 +106,9 @@ export async function generatePendingInvoice(
     uuid,
     icv,
     pih,
-    invoice_hash: computeInvoiceHash(xml),
-    xml,
-    qr_code: null,
+    invoice_hash: invoiceHash,
+    xml: signedXml.replace("SET_QR_CODE_DATA", qrCode),
+    qr_code: qrCode,
     status: "pending",
   };
 

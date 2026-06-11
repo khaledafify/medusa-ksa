@@ -21,6 +21,11 @@ developer portal (https://sandbox.zatca.gov.sa → Download SDK).
   base64 of the raw 32-byte digest). Deterministic across re-signs.
 - `fatoora -validate` on `simplified-invoice-signed.xml`:
   XSD / EN / KSA / QR / SIGNATURE / PIH all **PASSED** (GLOBAL = PASSED).
+- `fatoora -validate` on a fully generated invoice from this package
+  (`npx tsx scripts/emit-sample-signed-invoice.ts /tmp/out.xml` — fresh
+  XAdES signature + TLV QR, golden data, SDK test credentials):
+  XSD / EN / KSA / QR / SIGNATURE / PIH all **PASSED** (GLOBAL = PASSED,
+  SDK 3.3.8, JDK 11).
 
 ## Running the validator locally
 
