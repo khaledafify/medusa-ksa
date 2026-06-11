@@ -9,7 +9,11 @@ import { ZATCA_MODULE } from "../modules/zatca";
 import { ZATCA_INVOICE_STATUS } from "../modules/zatca/lib/lifecycle";
 import type ZatcaModuleService from "../modules/zatca/service";
 import type { GenerateLifecycleDocumentInput } from "../modules/zatca/service";
-import { notifyZatcaRemediation } from "../lib/zatca-remediation-notification";
+import {
+  notifyZatcaGenerationFailure,
+  notifyZatcaRemediation,
+} from "../lib/zatca-remediation-notification";
+import { ReconciliationMismatchError } from "../modules/zatca/lib/tax-base";
 
 /**
  * `report-invoice` workflow (S5, SPEC §4): generate + persist the signed,
@@ -25,7 +29,15 @@ const generateLifecycleDocumentStep = createStep(
   "zatca-generate-lifecycle-document",
   async (input: ReportInvoiceWorkflowInput, { container }) => {
     const service: ZatcaModuleService = container.resolve(ZATCA_MODULE);
-    const invoice = await service.generateLifecycleDocument(input);
+    let invoice: Awaited<ReturnType<ZatcaModuleService["generateLifecycleDocument"]>>;
+    try {
+      invoice = await service.generateLifecycleDocument(input);
+    } catch (error) {
+      if (error instanceof ReconciliationMismatchError) {
+        await notifyZatcaGenerationFailure(container, input, error);
+      }
+      throw error;
+    }
     return new StepResponse({ invoiceId: invoice.id, status: invoice.status });
   },
 );

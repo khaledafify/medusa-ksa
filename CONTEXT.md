@@ -56,6 +56,18 @@ _Avoid_: submission, sync.
 B2B/B2G invoice (buyer VAT + address, goes through Clearance) / B2C invoice (QR-stamped, goes through Reporting).
 _Avoid_: tax invoice, receipt.
 
+**Credit note (381)** / **Debit note (383)**:
+Post-issuance ZATCA documents for value/VAT decreases or increases. They use the UBL `<Invoice>` root with `InvoiceTypeCode` 381 or 383, positive amounts, a billing reference to the original invoice, and a reason.
+_Avoid_: negative invoice, refund invoice, adjustment invoice.
+
+**Lifecycle source**:
+The idempotency key for a ZATCA document: `order`, `refund`, `return`, `order_cancel`, or `order_edit` plus the triggering entity id. One order can have one original invoice and many lifecycle notes.
+_Avoid_: one-invoice-per-order, order id as the only key.
+
+**Reconciliation invariant**:
+The safety rule that a built ZATCA document must match Medusa's computed tax-inclusive total and VAT total before reporting. A mismatch fails closed; a numerically wrong document is never reported.
+_Avoid_: best-effort totals, rounding later.
+
 ## Payments
 
 **Hosted payment**:

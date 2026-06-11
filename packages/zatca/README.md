@@ -2,30 +2,37 @@
 
 ZATCA / Fatoora Phase 2 e-invoicing for Medusa v2, built for Saudi B2C commerce.
 
-This package is a Medusa custom module that generates Simplified UBL 2.1 invoices, signs them with the onboarded EGS Production CSID, stamps the 9-tag TLV QR code, maintains the ICV/PIH hash chain, and reports invoices to ZATCA.
+This package is a Medusa custom module that generates tax-correct Simplified UBL 2.1 invoices, signs them with the onboarded EGS Production CSID, stamps the 9-tag TLV QR code, maintains the ICV/PIH hash chain, and reports invoices plus lifecycle credit/debit notes to ZATCA.
 
-Status: Beta. The B2C Simplified Reporting path is implemented and sandbox-validated. Simulation certification is still pending, so this is not marked stable yet.
+Status: Beta. The B2C Simplified Reporting path is implemented. Simulation certification is still pending, so this is not marked stable yet.
 
 ## Scope
 
-Implemented in v1:
+Implemented in v1.1:
 
 - B2C Simplified invoices only
 - Single EGS identity
 - Reporting API flow
 - ZATCA onboarding: CSR, Compliance CSID, compliance checks, Production CSID
-- Per-order invoice generation on `payment_captured` by default
-- Optional `order_placed` trigger for COD or auth-only stores
+- Per-order invoice generation on `payment_captured` by default, with `order_placed` available for COD/auth-only stores
+- Correct original-invoice tax base for line discounts, shipping charges, tax-inclusive pricing, and multiple VAT rates
+- Fail-closed reconciliation: if built totals do not match Medusa's order total/VAT total, the document is not reported
+- Reported credit notes (381) for refunds, returns, and post-issuance cancellations
+- Reported credit notes (381) or debit notes (383) for post-issuance order edits
+- Source-key idempotency, so one order can own one invoice and many lifecycle notes
 - PostgreSQL-serialized ICV/PIH hash chain
 - Deferred retry job with `FOR UPDATE SKIP LOCKED`
-- Native Medusa Admin route at Settings -> ZATCA
+- Admin remediation notices for rejected or failed documents
 
 Not implemented yet:
 
 - B2B Standard invoices and Clearance
 - Multiple EGS units
 - Buyer-VAT routing
-- Credit or debit note generation outside the onboarding compliance samples
+- True partial-capture business models
+- Mixed-rate partial money refunds that are not tied to returned items
+- Exchanges and claims documents
+- Automatic re-issue after rejection beyond admin notification/action
 - Storefront UI
 
 ## Requirements
@@ -105,20 +112,22 @@ The private key, Compliance CSID, and Production CSID are encrypted before they 
 For each configured event:
 
 1. Resolve the order.
-2. Guard idempotency with one `ZatcaInvoice` per `order_id`.
+2. Guard idempotency with the lifecycle source key: original invoices use `("order", order_id)`, notes use their triggering refund, return, cancellation, or order-edit id.
 3. Acquire the per-EGS PostgreSQL advisory transaction lock.
 4. Allocate the next ICV and PIH.
-5. Build UBL 2.1 XML.
+5. Build UBL 2.1 XML and reconcile the built tax-inclusive amount and VAT against Medusa's computed order graph.
 6. Hash, sign, QR-stamp, and persist the pending invoice.
 7. Submit to the Reporting API outside the chain lock.
 
 Transient Reporting failures keep the invoice pending for the retry job. Definitive 4xx rejections mark the invoice rejected. Invoices that outlive the 24-hour Reporting window are marked failed and surfaced to the admin.
 
+Credit/debit notes use the same `<Invoice>` root and Reporting endpoint as original invoices. The document type is carried by `cbc:InvoiceTypeCode`: 388 for invoices, 381 for credit notes, and 383 for debit notes. Note amounts are positive; the type code carries the direction. Notes reference the original invoice with a bare serial in `cac:BillingReference` and include the human-readable reason in `cbc:InstructionNote`.
+
 ## Retry Reporting
 
 The scheduled job claims due pending invoices with `SELECT ... FOR UPDATE SKIP LOCKED`, so overlapping workers claim disjoint rows. Backoff doubles per attempt and is capped inside the 24-hour Reporting window.
 
-The job never mutates the order. A terminal failed invoice emits an admin feed notification when a notification provider is installed, with an error log as the fallback.
+The job never mutates the order. Terminal rejected or failed documents keep their ICV and remain part of the chain; the admin dashboard shows a remediation notice and emits an admin feed notification when a notification provider is installed, with an error log as the fallback.
 
 ## Admin
 
@@ -126,14 +135,16 @@ The package includes the suite's only sanctioned custom UI:
 
 - Status banner: not onboarded, compliance, or production
 - Onboarding wizard
-- Reporting dashboard with pending, reported, rejected, failed, and total counts
+- Reporting dashboard with pending, reported, rejected, failed, total, invoice, credit-note, and debit-note counts
+- Rejected/failed document remediation notices
 - Retry failed action
+- Corrective credit-note action for rejected lifecycle documents whose original invoice remains reported
 
 No API keys are entered in the admin. Bootstrap configuration stays in env and `medusa-config.ts`; generated ZATCA credentials are encrypted in the database.
 
 ## Validation and Adaptation Source
 
-XML, signing, and QR behavior is validated offline against fixtures from the official ZATCA Compliance & Enablement Toolbox SDK v3.3.8 before sandbox calls are made.
+XML, signing, and QR behavior is validated offline against fixtures from the official ZATCA Compliance & Enablement Toolbox SDK v3.3.8 before sandbox calls are made. New tax-base and lifecycle paths are covered by deterministic tests; run the SDK validator and ZATCA simulation again before production certification.
 
 Signing and QR logic is adapted from [`wes4m/zatca-xml-js`](https://github.com/wes4m/zatca-xml-js), MIT licensed and compatible with this repository's MIT license. The fixture provenance and validator notes live in [`test/fixtures/sdk/README.md`](./test/fixtures/sdk/README.md).
 
