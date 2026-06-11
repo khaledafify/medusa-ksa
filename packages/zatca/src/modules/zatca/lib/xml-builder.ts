@@ -43,6 +43,8 @@ export interface ZatcaCustomer extends ZatcaPartyAddress {
 export interface ZatcaInvoiceLine {
   /** Sequential line id, 1-based. */
   id: number;
+  /** Original Medusa order item id, persisted for return/partial-credit mapping. */
+  sourceItemId?: string;
   name: string;
   /** Quantity (UBL renders it with 6 decimals; fractional quantities are valid). */
   quantity: number;

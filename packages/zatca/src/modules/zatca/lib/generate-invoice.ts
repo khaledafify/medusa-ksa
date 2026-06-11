@@ -102,6 +102,7 @@ function defaultLinesSnapshot(
   return {
     lines: input.lines.map((line) => ({
       id: line.id,
+      sourceItemId: line.sourceItemId ?? null,
       name: line.name,
       quantity: line.quantity,
       unitPriceHalalas: line.unitPriceHalalas,

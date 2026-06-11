@@ -130,6 +130,7 @@ export function deriveSimplifiedInvoiceTaxBase(
 
     lines.push({
       id: idx + 1,
+      sourceItemId: item.id,
       name: item.title,
       quantity: quantityOf(item),
       unitPriceHalalas: unitHalalasFromSubtotal(item),

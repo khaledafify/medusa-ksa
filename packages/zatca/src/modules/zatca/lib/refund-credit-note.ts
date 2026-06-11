@@ -93,6 +93,7 @@ function normalizeLine(value: unknown, fallbackId: number): ZatcaInvoiceLine {
       : halalasField(r.lineExtensionHalalas, "lineExtensionHalalas");
   return {
     id: Number.isSafeInteger(Number(r.id)) ? Number(r.id) : fallbackId,
+    sourceItemId: optionalString(r.sourceItemId),
     name: optionalString(r.name) ?? `Line ${fallbackId}`,
     quantity: numberField(r.quantity, "quantity"),
     unitPriceHalalas: halalasField(r.unitPriceHalalas, "unitPriceHalalas"),

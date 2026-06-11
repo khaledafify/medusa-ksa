@@ -34,6 +34,7 @@ describe("deriveSimplifiedInvoiceTaxBase", () => {
     expect(derived.lines).toEqual([
       {
         id: 1,
+        sourceItemId: "ordli_discount",
         name: "Discounted taxable item",
         quantity: 2,
         unitPriceHalalas: 10000,
