@@ -12,7 +12,6 @@
     "resolveJsonModule": true,
     "jsx": "react-jsx",
     "outDir": "./.medusa/server",
-    "rootDir": "./src",
     "baseUrl": "."
   },
   "include": ["src", "medusa-config.ts"],

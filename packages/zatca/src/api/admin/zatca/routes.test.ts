@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type ZatcaModuleService from "../../../modules/zatca/service";
+import { GET as getSummary } from "./invoices/route";
+import { POST as postRetry } from "./invoices/retry/route";
 import { onboardBodySchema } from "./onboard/route";
 import { GET as getStatus } from "./status/route";
 
@@ -44,6 +46,35 @@ describe("GET /admin/zatca/status", () => {
     for (const key of keys) {
       expect(key).not.toMatch(/private|csid|secret|csr|certificate|key/i);
     }
+  });
+});
+
+describe("GET /admin/zatca/invoices", () => {
+  it("returns counts only — no row data, XML, or QR", async () => {
+    const summary = { pending: 1, reported: 5, rejected: 0, failed: 2, total: 8 };
+    const { req, res, payload } = fakeReqRes({
+      getZatcaInvoiceSummary: () => Promise.resolve(summary),
+    });
+
+    await getSummary(req, res);
+
+    expect(payload()).toEqual(summary);
+    for (const value of Object.values(payload() as Record<string, unknown>)) {
+      expect(typeof value).toBe("number");
+    }
+  });
+});
+
+describe("POST /admin/zatca/invoices/retry", () => {
+  it("returns ids per outcome from the forced retry", async () => {
+    const outcome = { reported: ["zatinv_1"], rejected: [], failed: ["zatinv_2"] };
+    const { req, res, payload } = fakeReqRes({
+      retryFailedZatcaInvoices: () => Promise.resolve(outcome),
+    });
+
+    await postRetry(req, res);
+
+    expect(payload()).toEqual(outcome);
   });
 });
 

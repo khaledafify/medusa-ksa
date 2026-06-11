@@ -4,7 +4,7 @@
   "private": true,
   "description": "Medusa app wiring the Medusa KSA suite — dev + e2e harness (NOT published).",
   "dependencies": {
-    "@medusajs/admin-sdk": "^2.13.0",
+    "@medusajs/admin-sdk": "^2.15.5",
     "@medusajs/cli": "^2.13.0",
     "@medusajs/dashboard": "^2.13.0",
     "@medusajs/framework": "^2.13.0",
@@ -19,7 +19,7 @@
   "devDependencies": {
     "@swc/core": "^1.7.28",
     "@types/node": "^20.14.0",
-    "@types/react": "^18.3.0",
+    "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.0",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",

@@ -19,6 +19,8 @@ const ZatcaCredential = model.define("zatca_credential", {
   egs_serial_number: model.text(),
   org_name: model.text(),
   org_address: model.text(),
+  /** Structured supplier party (street, building, city…) for UBL invoices. */
+  supplier: model.json().nullable(),
   /** Commercial registration number. */
   crn: model.text(),
   /** 🔒 encrypted — EC private key generated during the CSR step. */

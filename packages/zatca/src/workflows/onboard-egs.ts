@@ -25,8 +25,7 @@ const requestComplianceCsidStep = createStep(
   "zatca-request-compliance-csid",
   async (input: OnboardEgsInput, { container }) => {
     const service: ZatcaModuleService = container.resolve(ZATCA_MODULE);
-    const { supplier: _supplier, ...orgInput } = input;
-    const result = await service.startOnboarding(orgInput);
+    const result = await service.startOnboarding(input);
     return new StepResponse({ complianceRequestId: result.requestId });
   },
 );

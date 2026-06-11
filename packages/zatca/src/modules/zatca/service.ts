@@ -1,8 +1,12 @@
 import { MedusaService } from "@medusajs/framework/utils";
 import { KsaError, KsaErrorCodes, secrets } from "@medusa-ksa/core";
-
 import { runComplianceChecks } from "./lib/compliance-checks";
 import { FatooraClient } from "./lib/fatoora-client";
+import {
+  generatePendingInvoice,
+  type GenerateInvoiceInput,
+  type PendingZatcaInvoiceRecord,
+} from "./lib/generate-invoice";
 import {
   onboardCompliance,
   type OnboardComplianceInput,
@@ -12,6 +16,10 @@ import {
   onboardProduction,
   type OnboardProductionResult,
 } from "./lib/onboard-production";
+import {
+  processPendingReports,
+  type ProcessResult,
+} from "./lib/retry-reporting";
 import ZatcaCredential from "./models/zatca-credential";
 import ZatcaInvoice from "./models/zatca-invoice";
 import { validateZatcaOptions } from "./loaders/validate-config";
@@ -23,6 +31,15 @@ export interface OnboardEgsInput
   extends Omit<OnboardComplianceInput, "environment"> {
   /** Supplier party for the compliance-check sample documents. */
   supplier: ZatcaSupplier;
+}
+
+/**
+ * Minimal structural slice of MikroORM's SqlEntityManager (registered as
+ * `manager` in the module container) — keeps `@mikro-orm/*` out of our deps.
+ */
+interface ZatcaEntityManager {
+  transactional<T>(cb: (txEm: ZatcaEntityManager) => Promise<T>): Promise<T>;
+  execute(sql: string, params?: unknown[]): Promise<unknown[]>;
 }
 
 /** Non-secret status view — the only thing API routes ever return (ADR-0004). */
@@ -48,11 +65,18 @@ class ZatcaModuleService extends MedusaService({
   ZatcaInvoice,
 }) {
   protected readonly options: ZatcaModuleOptions;
+  protected readonly manager: ZatcaEntityManager;
 
   constructor(container: Record<string, unknown>, options?: unknown) {
     // eslint-disable-next-line prefer-rest-params
     super(...(arguments as unknown as [Record<string, unknown>]));
     this.options = validateZatcaOptions(options ?? {});
+    this.manager = container.manager as ZatcaEntityManager;
+  }
+
+  /** The configured issuance trigger (PRD §1.3). */
+  getTrigger(): ZatcaModuleOptions["trigger"] {
+    return this.options.trigger;
   }
 
   /** The singleton EGS credential row (v1: single EGS, ADR-0006). */
@@ -82,13 +106,12 @@ class ZatcaModuleService extends MedusaService({
    * Onboarding step 1 (T4.3): CSR → Compliance CSID. Creates (or replaces —
    * re-onboarding rotates credentials, ADR-0004) the singleton credential.
    */
-  async startOnboarding(
-    input: Omit<OnboardEgsInput, "supplier">,
-  ): Promise<OnboardComplianceResult> {
+  async startOnboarding(input: OnboardEgsInput): Promise<OnboardComplianceResult> {
     const existing = await this.credentialRow();
+    const { supplier, ...orgInput } = input;
 
     return onboardCompliance(
-      { ...input, environment: this.options.environment },
+      { ...orgInput, environment: this.options.environment },
       {
         client: new FatooraClient({ environment: this.options.environment }),
         encryptionKey: this.options.encryptionKey,
@@ -97,10 +120,14 @@ class ZatcaModuleService extends MedusaService({
             await this.updateZatcaCredentials({
               id: existing.id,
               ...record,
+              supplier: supplier as unknown as Record<string, unknown>,
               production_csid: null,
             });
           } else {
-            await this.createZatcaCredentials(record);
+            await this.createZatcaCredentials({
+              ...record,
+              supplier: supplier as unknown as Record<string, unknown>,
+            });
           }
         },
       },
@@ -142,6 +169,239 @@ class ZatcaModuleService extends MedusaService({
         },
       },
     );
+  }
+
+  /**
+   * Generate, sign, QR-stamp, and persist the one invoice for an order
+   * (S5, ADR-0004): the advisory lock + allocation + persist all run inside
+   * one DB transaction; ZATCA submission stays outside. Idempotent — an
+   * existing invoice for the order is returned untouched (unique `order_id`
+   * backstops races at the DB level).
+   */
+  async generateInvoiceForOrder(
+    input: Omit<GenerateInvoiceInput, "egsKey" | "certificate" | "privateKey" | "supplier">,
+  ): Promise<{ id: string } & PendingZatcaInvoiceRecord> {
+    const [existing] = await this.listZatcaInvoices(
+      { order_id: input.orderId },
+      { take: 1 },
+    );
+    if (existing) {
+      return existing as { id: string } & PendingZatcaInvoiceRecord;
+    }
+
+    const { row, privateKey } = await this.decryptProductionCredentials();
+    const supplier = row.supplier as GenerateInvoiceInput["supplier"] | null;
+    if (!supplier) {
+      throw new KsaError(
+        "EGS credential has no supplier party — re-run onboarding.",
+        { prefix: "zatca", code: KsaErrorCodes.INVALID_INPUT },
+      );
+    }
+
+    return this.manager.transactional(async (txEm) => {
+      const ex = {
+        execute: (sql: string, params?: unknown[]) => txEm.execute(sql, params),
+      };
+      let created: { id: string } & PendingZatcaInvoiceRecord = null as never;
+      await generatePendingInvoice(
+        ex,
+        {
+          ...input,
+          egsKey: row.id,
+          certificate: row.certificate!,
+          privateKey,
+          supplier,
+        },
+        async (record) => {
+          created = (await this.createZatcaInvoices(record, {
+            transactionManager: txEm,
+          })) as { id: string } & PendingZatcaInvoiceRecord;
+        },
+      );
+      return created;
+    });
+  }
+
+  /**
+   * Report a pending invoice to ZATCA (S5). Runs outside any chain lock.
+   * 200/202 → `reported`; a definitive ZATCA rejection → `rejected`; any
+   * other failure leaves the invoice `pending` for the retry engine (S6),
+   * with the attempt counted and the response recorded.
+   */
+  async reportZatcaInvoice(invoiceId: string): Promise<{
+    id: string;
+    status: "reported" | "rejected" | "pending";
+  }> {
+    const invoice = await this.retrieveZatcaInvoice(invoiceId);
+    if (invoice.status === "reported") {
+      return { id: invoice.id, status: "reported" };
+    }
+
+    const { row, csid } = await this.decryptProductionCredentials();
+    void row;
+    const client = new FatooraClient({
+      environment: this.options.environment,
+      credentials: { certificate: csid.certificate, secret: csid.secret },
+    });
+
+    const submittedAt = new Date();
+    try {
+      const response = await client.reportInvoice({
+        signedXml: invoice.xml,
+        invoiceHash: invoice.invoice_hash,
+        uuid: invoice.uuid,
+      });
+      await this.updateZatcaInvoices({
+        id: invoice.id,
+        status: "reported",
+        zatca_response: response as Record<string, unknown>,
+        submitted_at: submittedAt,
+        reported_at: new Date(),
+        attempts: invoice.attempts + 1,
+      });
+      return { id: invoice.id, status: "reported" };
+    } catch (error) {
+      // A 4xx from ZATCA is a definitive rejection of this document; other
+      // failures (network, 5xx) stay pending for the retry engine.
+      const status =
+        error instanceof KsaError && /responded 4\d\d/.test(error.message)
+          ? "rejected"
+          : "pending";
+      await this.updateZatcaInvoices({
+        id: invoice.id,
+        status: status === "rejected" ? "rejected" : invoice.status,
+        zatca_response: { error: String(error) },
+        submitted_at: submittedAt,
+        attempts: invoice.attempts + 1,
+      });
+      if (status === "rejected") {
+        return { id: invoice.id, status };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Retry engine entry point (S6): claim due pending invoices with
+   * `SKIP LOCKED` and report them — exactly-once across concurrent runs.
+   * Stores not yet in production simply have nothing to report.
+   */
+  async processPendingZatcaReports(options?: {
+    limit?: number;
+    now?: Date;
+  }): Promise<ProcessResult> {
+    const empty: ProcessResult = {
+      reported: [],
+      rejected: [],
+      failed: [],
+      skipped: [],
+      errored: [],
+    };
+    const row = await this.credentialRow();
+    if (row?.status !== "production") return empty;
+
+    const { csid } = await this.decryptProductionCredentials();
+    const client = new FatooraClient({
+      environment: this.options.environment,
+      credentials: { certificate: csid.certificate, secret: csid.secret },
+    });
+
+    return this.manager.transactional((txEm) =>
+      processPendingReports(
+        { execute: (sql, params) => txEm.execute(sql, params) },
+        {
+          ...options,
+          report: async (invoice) => {
+            try {
+              const response = await client.reportInvoice({
+                signedXml: invoice.xml,
+                invoiceHash: invoice.invoice_hash,
+                uuid: invoice.uuid,
+              });
+              return { status: "reported", response };
+            } catch (error) {
+              // 4xx = definitive rejection; anything else stays transient.
+              if (
+                error instanceof KsaError &&
+                /responded 4\d\d/.test(error.message)
+              ) {
+                return { status: "rejected", response: { error: String(error) } };
+              }
+              throw error;
+            }
+          },
+        },
+      ),
+    );
+  }
+
+  /** Invoice counts by status — the wizard dashboard (no row data, no XML). */
+  async getZatcaInvoiceSummary(): Promise<{
+    pending: number;
+    reported: number;
+    rejected: number;
+    failed: number;
+    total: number;
+  }> {
+    const rows = (await this.manager.execute(
+      `select status, count(*)::int as count
+         from zatca_invoice
+        where deleted_at is null
+        group by status`,
+    )) as { status: string; count: number }[];
+    const summary = { pending: 0, reported: 0, rejected: 0, failed: 0, total: 0 };
+    for (const row of rows) {
+      if (row.status in summary) {
+        summary[row.status as keyof typeof summary] = row.count;
+      }
+      summary.total += row.count;
+    }
+    return summary;
+  }
+
+  /**
+   * Admin-forced retry of terminally `failed` invoices (wizard "retry
+   * failed"). Bypasses the 24h window check — the admin decides; ZATCA gets
+   * the final say. Invoices that still can't be reported stay `failed`.
+   */
+  async retryFailedZatcaInvoices(): Promise<{
+    reported: string[];
+    rejected: string[];
+    failed: string[];
+  }> {
+    const failedRows = await this.listZatcaInvoices({ status: "failed" });
+    const result: { reported: string[]; rejected: string[]; failed: string[] } =
+      { reported: [], rejected: [], failed: [] };
+    for (const invoice of failedRows) {
+      try {
+        const outcome = await this.reportZatcaInvoice(invoice.id);
+        result[outcome.status === "reported" ? "reported" : "rejected"].push(
+          invoice.id,
+        );
+      } catch {
+        result.failed.push(invoice.id); // transient — stays failed
+      }
+    }
+    return result;
+  }
+
+  /** Decrypt the PCSID + private key just-in-time; never leaves memory. */
+  private async decryptProductionCredentials() {
+    const row = await this.requireCredentialRow("production");
+    if (!row.production_csid || !row.private_key) {
+      throw new KsaError(
+        "EGS has no Production CSID — complete onboarding first.",
+        { prefix: "zatca", code: KsaErrorCodes.INVALID_INPUT },
+      );
+    }
+    const csid = JSON.parse(
+      secrets.decrypt(row.production_csid, this.options.encryptionKey),
+    ) as { requestId: string; certificate: string; secret: string };
+    const privateKey = secrets.decrypt(
+      row.private_key,
+      this.options.encryptionKey,
+    );
+    return { row, csid, privateKey };
   }
 
   private async requireCredentialRow(expectedStatus?: string) {

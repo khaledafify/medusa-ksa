@@ -7,8 +7,11 @@
     // plugin tooling (plugin:db:generate) require()s raw .ts sources, which
     // is impossible in an ESM-typed package. verbatimModuleSyntax forbids
     // `import` syntax in CJS emit, so it is relaxed here only.
-    "verbatimModuleSyntax": false
+    "verbatimModuleSyntax": false,
+    "jsx": "react-jsx"
   },
   "include": ["src", "scripts", "vitest.config.ts"],
-  "exclude": [".medusa", "node_modules"]
+  // src/admin is browser code (DOM lib) — typechecked via tsconfig.admin.json
+  // to keep the DOM types away from the server's xmldom typings.
+  "exclude": [".medusa", "node_modules", "src/admin"]
 }

@@ -7,6 +7,8 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+apps/*/medusa-config.js
+apps/*/medusa-config.js.map
 
 # ───────────────────────────── Turbo / cache ────────────────────────────
 .turbo/

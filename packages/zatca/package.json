@@ -13,13 +13,21 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@medusajs/admin-sdk": "^2.15.5",
     "@medusajs/admin-shared": "^2.13.0",
     "@medusajs/cli": "^2.13.0",
     "@medusajs/framework": "^2.13.0",
+    "@medusajs/icons": "^2.15.5",
+    "@medusajs/js-sdk": "^2.15.5",
     "@medusajs/medusa": "^2.13.0",
+    "@medusajs/ui": "^4.1.15",
+    "@tanstack/react-query": "^5.64.2",
     "@types/node": "^20.14.0",
     "@types/pg": "^8.20.0",
+    "@types/react": "^18.3.31",
     "pg": "^8.13.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "typescript": "^5.7.3",
     "vitest": "^2.1.8"
   },
@@ -31,6 +39,11 @@
     "./.medusa/server/src/modules/*": "./.medusa/server/src/modules/*/index.js",
     "./modules/*": "./.medusa/server/src/modules/*/index.js",
     "./workflows": "./.medusa/server/src/workflows/index.js",
+    "./admin": {
+      "import": "./.medusa/server/src/admin/index.mjs",
+      "require": "./.medusa/server/src/admin/index.js",
+      "default": "./.medusa/server/src/admin/index.js"
+    },
     "./*": "./.medusa/server/src/*.js"
   },
   "files": [
@@ -50,8 +63,12 @@
     "zatca"
   ],
   "peerDependencies": {
+    "@medusajs/admin-sdk": "^2.15.5",
     "@medusajs/framework": "^2.13.0",
-    "@medusajs/medusa": "^2.13.0"
+    "@medusajs/icons": "^2.15.5",
+    "@medusajs/js-sdk": "^2.15.5",
+    "@medusajs/medusa": "^2.13.0",
+    "@medusajs/ui": "^4.1.15"
   },
   "publishConfig": {
     "access": "public",
@@ -68,6 +85,6 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p src/admin/tsconfig.json"
   }
 }
