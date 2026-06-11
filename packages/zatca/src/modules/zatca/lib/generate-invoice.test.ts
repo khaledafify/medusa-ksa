@@ -109,9 +109,10 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
     const freshSignature = /<ds:SignatureValue>([^<]+)/.exec(record.xml)![1]!;
     const goldenQr =
       /<cbc:ID>QR<\/cbc:ID>[\s\S]*?mimeCode="text\/plain">([^<]+)</.exec(goldenXml)![1]!;
+    expect(record.qr_code).not.toBeNull();
     const normalized = record.xml
       .replace(freshSignature, GOLDEN_SIGNATURE)
-      .replace(record.qr_code, goldenQr);
+      .replace(record.qr_code!, goldenQr);
     const normalizedGolden = goldenXml
       .replaceAll(
         "<cbc:ChargeIndicator>true</cbc:ChargeIndicator>",
@@ -171,23 +172,33 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
     expect(persisted).toHaveLength(0);
   });
 
-  it("does not persist when reconciliation fails", async () => {
+  it("persists a failed, unreported row when reconciliation fails", async () => {
     const persisted: PendingZatcaInvoiceRecord[] = [];
-    await expect(
-      generatePendingInvoice(
-        fakeExecutor(null),
-        {
-          ...goldenInput,
-          expectedTaxInclusiveHalalas: 99999,
-          expectedTaxHalalas: 3015,
-        },
-        (r) => {
-          persisted.push(r);
-          return Promise.resolve();
-        },
-      ),
-    ).rejects.toThrow(/reconciliation_mismatch/);
-    expect(persisted).toHaveLength(0);
+    const record = await generatePendingInvoice(
+      fakeExecutor(null),
+      {
+        ...goldenInput,
+        expectedTaxInclusiveHalalas: 99999,
+        expectedTaxHalalas: 3015,
+      },
+      (r) => {
+        persisted.push(r);
+        return Promise.resolve();
+      },
+    );
+
+    expect(record.status).toBe("failed");
+    expect(record.icv).toBe(1);
+    expect(record.pih).toBe(SEED_PIH);
+    expect(record.qr_code).toBeNull();
+    expect(record.xml).not.toContain("<ds:SignatureValue>");
+    expect(record.invoice_hash).toBe(computeInvoiceHash(record.xml));
+    expect(record.zatca_response).toEqual({
+      error: "reconciliation_mismatch",
+      built: { taxInclusiveHalalas: 23115, taxHalalas: 3015 },
+      expected: { expectedTaxInclusiveHalalas: 99999, expectedTaxHalalas: 3015 },
+    });
+    expect(persisted).toEqual([record]);
   });
 
   it("carries credit-note lifecycle metadata into the row and XML", async () => {

@@ -6,6 +6,7 @@ import {
   readChainHead,
   type SqlExecutor,
 } from "./hash-chain";
+import { computeInvoiceHash } from "./invoice-hash";
 import { generateQr } from "./qr";
 import { signInvoice } from "./signer";
 import {
@@ -20,13 +21,17 @@ import {
   formatHalalas,
   type SimplifiedInvoiceProps,
 } from "./xml-builder";
-import { assertSimplifiedInvoiceReconciles } from "./tax-base";
+import {
+  assertSimplifiedInvoiceReconciles,
+  ReconciliationMismatchError,
+} from "./tax-base";
 
 /**
  * Generate pipeline (ADR-0004): under the per-EGS chain lock,
- * allocate ICV/PIH → build UBL XML → hash → sign (XAdES) → stamp QR →
- * persist a **pending** ZatcaInvoice. ZATCA submission (Reporting) always
- * stays outside the lock — the deferred engine picks pending invoices up.
+ * allocate ICV/PIH → build UBL XML → reconcile → hash → sign (XAdES) →
+ * stamp QR → persist a ZatcaInvoice. Reconciliation mismatches persist as
+ * `failed` and are never signed or reported. ZATCA submission (Reporting)
+ * always stays outside the lock — the deferred engine picks pending invoices up.
  */
 
 export type { ZatcaDocumentType, ZatcaLifecycleSourceType };
@@ -87,9 +92,12 @@ export interface PendingZatcaInvoiceRecord {
   invoice_hash: string;
   /** Signed, QR-stamped UBL XML. */
   xml: string;
-  /** TLV 9-tag QR, base64. */
-  qr_code: string;
-  status: typeof ZATCA_INVOICE_STATUS.PENDING;
+  /** TLV 9-tag QR, base64. Null for local failed reconciliation rows. */
+  qr_code: string | null;
+  status:
+    | typeof ZATCA_INVOICE_STATUS.PENDING
+    | typeof ZATCA_INVOICE_STATUS.FAILED;
+  zatca_response?: Record<string, unknown>;
 }
 
 function defaultLinesSnapshot(
@@ -201,21 +209,67 @@ export async function generatePendingInvoice(
     icv,
     pih,
   });
+
+  const baseRecord = {
+    order_id: orderId,
+    document_type: documentType,
+    invoice_type: "simplified" as const,
+    source_type: sourceType,
+    source_id: resolvedSourceId,
+    parent_invoice_id: resolvedParentInvoiceId,
+    billing_reference: invoiceProps.billingReference ?? null,
+    reason: resolvedReason,
+    lines_snapshot:
+      linesSnapshot ??
+      defaultLinesSnapshot({
+        lines: invoiceProps.lines,
+        documentAllowances: invoiceProps.documentAllowances,
+        documentCharges: invoiceProps.documentCharges,
+        totals: {
+          taxInclusiveHalalas: built.taxInclusiveHalalas,
+          taxHalalas: built.taxHalalas,
+        },
+      }),
+    uuid,
+    icv,
+    pih,
+  };
+
   if (
     expectedTaxInclusiveHalalas !== undefined ||
     expectedTaxHalalas !== undefined
   ) {
-    assertSimplifiedInvoiceReconciles(
-      {
-        taxInclusiveHalalas: built.taxInclusiveHalalas,
-        taxHalalas: built.taxHalalas,
-      },
-      {
-        expectedTaxInclusiveHalalas:
-          expectedTaxInclusiveHalalas ?? built.taxInclusiveHalalas,
-        expectedTaxHalalas: expectedTaxHalalas ?? built.taxHalalas,
-      },
-    );
+    try {
+      assertSimplifiedInvoiceReconciles(
+        {
+          taxInclusiveHalalas: built.taxInclusiveHalalas,
+          taxHalalas: built.taxHalalas,
+        },
+        {
+          expectedTaxInclusiveHalalas:
+            expectedTaxInclusiveHalalas ?? built.taxInclusiveHalalas,
+          expectedTaxHalalas: expectedTaxHalalas ?? built.taxHalalas,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof ReconciliationMismatchError)) {
+        throw error;
+      }
+      const failedRecord: PendingZatcaInvoiceRecord = {
+        ...baseRecord,
+        invoice_hash: computeInvoiceHash(built.xml),
+        xml: built.xml,
+        qr_code: null,
+        status: ZATCA_INVOICE_STATUS.FAILED,
+        zatca_response: {
+          error: error.code,
+          built: error.built,
+          expected: error.expected,
+        },
+      };
+      await persist(failedRecord);
+      return failedRecord;
+    }
   }
 
   const { signedXml, invoiceHash, digitalSignature } = signInvoice({
@@ -237,28 +291,7 @@ export async function generatePendingInvoice(
   });
 
   const record: PendingZatcaInvoiceRecord = {
-    order_id: orderId,
-    document_type: documentType,
-    invoice_type: "simplified",
-    source_type: sourceType,
-    source_id: resolvedSourceId,
-    parent_invoice_id: resolvedParentInvoiceId,
-    billing_reference: invoiceProps.billingReference ?? null,
-    reason: resolvedReason,
-    lines_snapshot:
-      linesSnapshot ??
-      defaultLinesSnapshot({
-        lines: invoiceProps.lines,
-        documentAllowances: invoiceProps.documentAllowances,
-        documentCharges: invoiceProps.documentCharges,
-        totals: {
-          taxInclusiveHalalas: built.taxInclusiveHalalas,
-          taxHalalas: built.taxHalalas,
-        },
-      }),
-    uuid,
-    icv,
-    pih,
+    ...baseRecord,
     invoice_hash: invoiceHash,
     xml: signedXml.replace("SET_QR_CODE_DATA", qrCode),
     qr_code: qrCode,

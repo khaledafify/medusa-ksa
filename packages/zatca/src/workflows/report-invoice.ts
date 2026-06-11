@@ -6,7 +6,10 @@ import {
 } from "@medusajs/framework/workflows-sdk";
 
 import { ZATCA_MODULE } from "../modules/zatca";
-import { ZATCA_INVOICE_STATUS } from "../modules/zatca/lib/lifecycle";
+import {
+  ZATCA_INVOICE_STATUS,
+  type ZatcaInvoiceStatus,
+} from "../modules/zatca/lib/lifecycle";
 import type ZatcaModuleService from "../modules/zatca/service";
 import type { GenerateLifecycleDocumentInput } from "../modules/zatca/service";
 import {
@@ -25,7 +28,26 @@ import { ReconciliationMismatchError } from "../modules/zatca/lib/tax-base";
 
 export type ReportInvoiceWorkflowInput = GenerateLifecycleDocumentInput;
 
-const generateLifecycleDocumentStep = createStep(
+export interface ReportInvoiceWorkflowResult {
+  id: string;
+  status: ZatcaInvoiceStatus;
+}
+
+interface GenerateLifecycleDocumentStepResult {
+  invoiceId: string;
+  status: typeof ZATCA_INVOICE_STATUS.PENDING | typeof ZATCA_INVOICE_STATUS.FAILED;
+}
+
+interface ReportInvoiceStepInput {
+  invoiceId: string;
+  status: typeof ZATCA_INVOICE_STATUS.PENDING | typeof ZATCA_INVOICE_STATUS.FAILED;
+}
+
+const generateLifecycleDocumentStep = createStep<
+  ReportInvoiceWorkflowInput,
+  GenerateLifecycleDocumentStepResult,
+  GenerateLifecycleDocumentStepResult
+>(
   "zatca-generate-lifecycle-document",
   async (input: ReportInvoiceWorkflowInput, { container }) => {
     const service: ZatcaModuleService = container.resolve(ZATCA_MODULE);
@@ -38,13 +60,36 @@ const generateLifecycleDocumentStep = createStep(
       }
       throw error;
     }
+    if (
+      invoice.status === ZATCA_INVOICE_STATUS.FAILED &&
+      invoice.zatca_response?.error === "reconciliation_mismatch"
+    ) {
+      const built = invoice.zatca_response.built as ConstructorParameters<
+        typeof ReconciliationMismatchError
+      >[0];
+      const expected = invoice.zatca_response.expected as ConstructorParameters<
+        typeof ReconciliationMismatchError
+      >[1];
+      await notifyZatcaGenerationFailure(
+        container,
+        input,
+        new ReconciliationMismatchError(built, expected),
+      );
+    }
     return new StepResponse({ invoiceId: invoice.id, status: invoice.status });
   },
 );
 
-const reportInvoiceStep = createStep(
+const reportInvoiceStep = createStep<
+  ReportInvoiceStepInput,
+  ReportInvoiceWorkflowResult,
+  ReportInvoiceWorkflowResult
+>(
   "zatca-report-invoice",
-  async (input: { invoiceId: string }, { container }) => {
+  async (input, { container }) => {
+    if (input.status !== ZATCA_INVOICE_STATUS.PENDING) {
+      return new StepResponse({ id: input.invoiceId, status: input.status });
+    }
     const service: ZatcaModuleService = container.resolve(ZATCA_MODULE);
     try {
       const result = await service.reportZatcaInvoice(input.invoiceId);
@@ -68,7 +113,10 @@ export const reportInvoiceWorkflow = createWorkflow(
   "zatca-report-invoice",
   function (input: ReportInvoiceWorkflowInput) {
     const generated = generateLifecycleDocumentStep(input);
-    const reported = reportInvoiceStep({ invoiceId: generated.invoiceId });
+    const reported = reportInvoiceStep({
+      invoiceId: generated.invoiceId,
+      status: generated.status,
+    });
     return new WorkflowResponse(reported);
   },
 );

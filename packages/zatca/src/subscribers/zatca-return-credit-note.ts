@@ -7,7 +7,6 @@ import {
   ZATCA_DOCUMENT_TYPE,
   ZATCA_LIFECYCLE_SOURCE_TYPE,
 } from "../modules/zatca/lib/lifecycle";
-import type { ZATCA_INVOICE_STATUS } from "../modules/zatca/lib/lifecycle";
 import { extractInvoiceSerial } from "../modules/zatca/lib/refund-credit-note";
 import {
   buildReturnCreditNoteTaxBase,
@@ -19,6 +18,7 @@ import type ZatcaModuleService from "../modules/zatca/service";
 import {
   reportInvoiceWorkflow,
   type ReportInvoiceWorkflowInput,
+  type ReportInvoiceWorkflowResult,
 } from "../workflows/report-invoice";
 
 interface ReturnView {
@@ -40,13 +40,7 @@ export interface ReturnCreditNoteDeps {
       config?: Record<string, unknown>,
     ): Promise<unknown[]>;
   };
-  runReportWorkflow(input: ReportInvoiceWorkflowInput): Promise<{
-    id: string;
-    status:
-      | typeof ZATCA_INVOICE_STATUS.REPORTED
-      | typeof ZATCA_INVOICE_STATUS.REJECTED
-      | typeof ZATCA_INVOICE_STATUS.PENDING;
-  }>;
+  runReportWorkflow(input: ReportInvoiceWorkflowInput): Promise<ReportInvoiceWorkflowResult>;
   linkDocument(orderId: string, invoiceId: string): Promise<void>;
   logger: { info(message: string): void; warn(message: string): void };
   now(): Date;

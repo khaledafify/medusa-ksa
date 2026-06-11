@@ -19,6 +19,7 @@ import type ZatcaModuleService from "../modules/zatca/service";
 import {
   reportInvoiceWorkflow,
   type ReportInvoiceWorkflowInput,
+  type ReportInvoiceWorkflowResult,
 } from "../workflows/report-invoice";
 
 interface OriginalInvoiceForCancellation extends OriginalInvoiceForRefund {
@@ -32,13 +33,7 @@ export interface CancellationCreditNoteDeps {
       config?: Record<string, unknown>,
     ): Promise<unknown[]>;
   };
-  runReportWorkflow(input: ReportInvoiceWorkflowInput): Promise<{
-    id: string;
-    status:
-      | typeof ZATCA_INVOICE_STATUS.REPORTED
-      | typeof ZATCA_INVOICE_STATUS.REJECTED
-      | typeof ZATCA_INVOICE_STATUS.PENDING;
-  }>;
+  runReportWorkflow(input: ReportInvoiceWorkflowInput): Promise<ReportInvoiceWorkflowResult>;
   linkDocument(orderId: string, invoiceId: string): Promise<void>;
   logger: { info(message: string): void; warn(message: string): void };
   now(): Date;
