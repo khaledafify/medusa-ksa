@@ -92,10 +92,15 @@ export interface PendingZatcaInvoiceRecord {
 }
 
 function defaultLinesSnapshot(
-  lines: GenerateInvoiceInput["lines"],
+  input: {
+    lines: GenerateInvoiceInput["lines"];
+    documentAllowances?: GenerateInvoiceInput["documentAllowances"];
+    documentCharges?: GenerateInvoiceInput["documentCharges"];
+    totals: { taxInclusiveHalalas: number; taxHalalas: number };
+  },
 ): Record<string, unknown> {
   return {
-    lines: lines.map((line) => ({
+    lines: input.lines.map((line) => ({
       id: line.id,
       name: line.name,
       quantity: line.quantity,
@@ -103,6 +108,9 @@ function defaultLinesSnapshot(
       lineExtensionHalalas: line.lineExtensionHalalas ?? null,
       vatPercent: line.vatPercent,
     })),
+    documentAllowances: input.documentAllowances ?? [],
+    documentCharges: input.documentCharges ?? [],
+    totals: input.totals,
   };
 }
 
@@ -235,7 +243,17 @@ export async function generatePendingInvoice(
     parent_invoice_id: resolvedParentInvoiceId,
     billing_reference: invoiceProps.billingReference ?? null,
     reason: resolvedReason,
-    lines_snapshot: linesSnapshot ?? defaultLinesSnapshot(invoiceProps.lines),
+    lines_snapshot:
+      linesSnapshot ??
+      defaultLinesSnapshot({
+        lines: invoiceProps.lines,
+        documentAllowances: invoiceProps.documentAllowances,
+        documentCharges: invoiceProps.documentCharges,
+        totals: {
+          taxInclusiveHalalas: built.taxInclusiveHalalas,
+          taxHalalas: built.taxHalalas,
+        },
+      }),
     uuid,
     icv,
     pih,

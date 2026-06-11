@@ -1,5 +1,5 @@
 import type { SubscriberArgs, SubscriberConfig } from "@medusajs/framework";
-import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils";
+import { ContainerRegistrationKeys } from "@medusajs/framework/utils";
 
 import { ZATCA_MODULE } from "../modules/zatca";
 import {
@@ -8,6 +8,7 @@ import {
 } from "../modules/zatca/lib/tax-base";
 import type ZatcaModuleService from "../modules/zatca/service";
 import { reportInvoiceWorkflow } from "../workflows/report-invoice";
+import { ensureZatcaInvoiceOrderLink } from "../lib/zatca-order-link";
 
 /**
  * Invoice issuance subscriber (S5, PRD §1.3): listens to both supported
@@ -25,13 +26,6 @@ interface OrderView extends OrderGraphForZatcaTaxBase {
   display_id: number;
   currency_code: string;
   status: string;
-}
-
-function linkedZatcaInvoiceIds(
-  value: { id: string } | { id: string }[] | null | undefined,
-): Set<string> {
-  if (!value) return new Set();
-  return new Set((Array.isArray(value) ? value : [value]).map((row) => row.id));
 }
 
 export default async function zatcaIssueInvoiceHandler({
@@ -149,23 +143,7 @@ export default async function zatcaIssueInvoiceHandler({
     },
   });
 
-  // Link the invoice to its order (Module Link, ADR-0001) — once. The link
-  // module rejects duplicate pairs, so a re-fired event must skip it.
-  const { data: linked } = await query.graph({
-    entity: "order",
-    fields: ["id", "zatca_invoice.id"],
-    filters: { id: orderId },
-  });
-  const existingLink = linked[0] as
-    | { zatca_invoice?: { id: string } | { id: string }[] | null }
-    | undefined;
-  if (!linkedZatcaInvoiceIds(existingLink?.zatca_invoice).has(result.id)) {
-    const link = container.resolve(ContainerRegistrationKeys.LINK);
-    await link.create({
-      [ZATCA_MODULE]: { zatca_invoice_id: result.id },
-      [Modules.ORDER]: { order_id: orderId },
-    });
-  }
+  await ensureZatcaInvoiceOrderLink(container, orderId, result.id);
 
   logger.info(`[zatca] order ${orderId} → invoice ${result.id} (${result.status})`);
 }
