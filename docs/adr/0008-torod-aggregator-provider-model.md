@@ -9,7 +9,7 @@
 
 ## Consequences
 
-- `calculatePrice` computes from cart weight + stock-location origin + cart destination. When inputs are missing (no product weight, unserviceable city) the option is **unavailable — never a guessed price** — with an optional configurable **default weight** escape hatch. Flat-rate shipping stays Medusa-native (no provider call).
+- `calculatePrice` computes from cart weight + a **default package** (Torod requires L×W×H, so quotes use the configurable `TOROD_DEFAULT_PACKAGE_CM`) + stock-location origin + cart destination. When inputs are missing (no product weight, no package, unserviceable city) the option is **unavailable — never a guessed price** — with optional configurable **default weight + default package** escape hatches. At booking, the package is a fulfillment-data override (explicit dims or a Torod package-template id) falling back to the default. Flat-rate shipping stays Medusa-native (no provider call).
 - **Returns are in v1** (`createReturnFulfillment` → reverse Torod shipment + on-demand return label), contingent on Torod's API; deferred with a README note only if Torod's return flow is genuinely separate.
 - All I/O via core `HttpClient`; config is `TOROD_CLIENT_ID` + `TOROD_CLIENT_SECRET` (Torod uses **OAuth client-credentials** — exchange id+secret for a cached short-lived bearer token) env-first via `createLoader`; webhooks verified via core `verifyWebhook`/`verifySecretToken`; `@medusajs/*` peer-only; only `@medusa-ksa/core` intra-repo import. Exact endpoints/fields verified against docs.torod.co (never assumed).
 - The individual couriers (`medusa-fulfillment-smsa/aramex/spl/imile`) remain a later fan-out; Torod covers them as one integration first.

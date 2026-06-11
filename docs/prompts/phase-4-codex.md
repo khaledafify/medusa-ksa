@@ -36,7 +36,8 @@ Create `packages/fulfillment/torod/src/providers/torod/constants.ts` and import 
 
 - `PROVIDER_ID = "torod"` (the provider `identifier`).
 - `TOROD_PREFIX = "torod"` (KsaError prefix).
-- `ENV` map: `TOROD_CLIENT_ID`, `TOROD_CLIENT_SECRET`, `TOROD_BASE_URL`, `TOROD_DEFAULT_WEIGHT_KG`, `TOROD_WEBHOOK_SECRET`. (Torod uses **OAuth client-credentials**, not a single API key.)
+- `ENV` map: `TOROD_CLIENT_ID`, `TOROD_CLIENT_SECRET`, `TOROD_BASE_URL`, `TOROD_DEFAULT_WEIGHT_KG`, `TOROD_DEFAULT_PACKAGE_CM`, `TOROD_WEBHOOK_SECRET`. (Torod uses **OAuth client-credentials**, not a single API key.)
+- `PACKAGE` constants — the default package dims parser (`TOROD_DEFAULT_PACKAGE_CM`, e.g. `10x10x10`), the package-templates endpoint, and the `FULFILLMENT_DATA_KEYS` for a per-booking package override (`packageLengthCm`/`widthCm`/`heightCm` **or** `torodPackageTemplateId`). Torod requires package L×W×H for rates + labels — no dimension literal inline.
 - `TOROD_TOKEN` constants — the token endpoint path + the bearer header name (from the notes); the client exchanges id+secret for a short-lived token and **caches it until expiry, refreshing on 401**. No token logic inline outside the client.
 - `TOROD_ENDPOINTS` — every API path (rates, couriers, create shipment, label, track, cancel, return, cities) as named fields, filled from `TOROD-API-NOTES.md`. No path string inline in `client.ts`.
 - `optionIdForCourier(courierCode)` + `courierCodeFromOptionId(id)` — the **only** way to build/parse a fulfillment-option id; never hand-concatenate.
@@ -95,11 +96,11 @@ pnpm lint                                          # eslint + dependency-cruiser
 ### S2 — Provider skeleton, options, rates
 - [ ] **T2.1** Provider class skeleton (`extends AbstractFulfillmentProviderService`, `static identifier = PROVIDER_ID`); register in `apps/demo-store/medusa-config.ts`. *Accept:* demo-store boots; provider appears in Settings → Shipping when adding a Shipping Option (admin compatibility — verify).
 - [ ] **T2.2** `getFulfillmentOptions` — one option per courier (ids via `optionIdForCourier`). *Accept:* one stable option per courier.
-- [ ] **T2.3** `calculatePrice` — live rate-shop (weight from cart items, origin from stock location, destination from cart address). *Accept:* returns the option's courier rate (mocked Torod); **missing weight ⇒ unavailable**, **unserviceable city ⇒ unavailable** (tests) — never a guessed price; `TOROD_DEFAULT_WEIGHT_KG` only when set.
+- [ ] **T2.3** `calculatePrice` — live rate-shop (weight from cart items, **package dims from `TOROD_DEFAULT_PACKAGE_CM`**, origin from stock location, destination from cart address). *Accept:* returns the option's courier rate using the default package (mocked Torod); **missing weight ⇒ unavailable**, **no package ⇒ unavailable**, **unserviceable city ⇒ unavailable** (tests) — never a guessed price; `TOROD_DEFAULT_WEIGHT_KG` / `TOROD_DEFAULT_PACKAGE_CM` only when set.
 - [ ] **T2.4** `validateFulfillmentData` — serviceability + city-code mapping. *Accept:* valid passes; unknown/unserviceable city → clear `KsaError`.
 
 ### S3 — Book, label, cancel (orders compatibility)
-- [ ] **T3.1** `createFulfillment` — book at fulfillment; store `torodShipmentId` + `trackingNumber` (+ cached `labelUrl` if sync) on fulfillment data; build the shipment from the **order** items/address/origin. *Accept:* sandbox booking returns tracking + shipment ref; tracking surfaces on the order fulfillment in admin.
+- [ ] **T3.1** `createFulfillment` — book at fulfillment; **package from fulfillment-data override (explicit dims or `torodPackageTemplateId`) else `TOROD_DEFAULT_PACKAGE_CM`**; store `torodShipmentId` + `trackingNumber` (+ cached `labelUrl` if sync) on fulfillment data; build the shipment from the **order** items/address/origin. *Accept:* sandbox booking returns tracking + shipment ref; the package override is honored (test); tracking surfaces on the order fulfillment in admin.
 - [ ] **T3.2** Document methods (`getFulfillmentDocuments` etc.) — fetch the **label on demand**. *Accept:* label retrievable whether Torod returns it sync or async.
 - [ ] **T3.3** `cancelFulfillment` — cancel if cancellable; terminal = idempotent no-op. *Accept:* cancel works; double-cancel / delivered = no-op (test).
 

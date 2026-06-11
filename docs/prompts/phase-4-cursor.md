@@ -51,17 +51,17 @@ A **Torod API account + sandbox key** (`TOROD_CLIENT_ID + TOROD_CLIENT_SECRET`) 
 # TASKS (in order)
 
 ## S1 — Scaffold + client
-- **T1.1 Scaffold** `packages/fulfillment/torod`: package.json (`medusa-fulfillment-torod`, `build: medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), `tsconfig.json`+`tsconfig.build.json` (mirror moyasar), `vitest.config.ts`, `.env.example` (`TOROD_CLIENT_ID + TOROD_CLIENT_SECRET`, `TOROD_BASE_URL?`, `TOROD_DEFAULT_WEIGHT_KG?`, `TOROD_WEBHOOK_SECRET?`). **Gate:** `pnpm install` resolves core; typecheck; syncpack consistent.
+- **T1.1 Scaffold** `packages/fulfillment/torod`: package.json (`medusa-fulfillment-torod`, `build: medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), `tsconfig.json`+`tsconfig.build.json` (mirror moyasar), `vitest.config.ts`, `.env.example` (`TOROD_CLIENT_ID + TOROD_CLIENT_SECRET`, `TOROD_BASE_URL?`, `TOROD_DEFAULT_WEIGHT_KG?`, `TOROD_DEFAULT_PACKAGE_CM?`, `TOROD_WEBHOOK_SECRET?`). **Gate:** `pnpm install` resolves core; typecheck; syncpack consistent.
 - **T1.2 Loader + options** (`createLoader`, `TOROD_CLIENT_ID + TOROD_CLIENT_SECRET` required, fail-fast). **Gate:** boot throws `KsaError` naming the var on missing key (test); boots with valid config.
 - **T1.3 `TorodClient`** over core `HttpClient` (base URL, auth per TOROD-API-NOTES). **Gate:** mocked-fetch tests — auth header correct, non-2xx → `KsaError`, no key in error messages.
 
 ## S2 — Options + rates
 - **T2.1 `getFulfillmentOptions`** — one option per Torod courier (from the couriers endpoint or a documented static set per the notes). **Gate:** returns one option per courier with stable ids.
-- **T2.2 `calculatePrice`** — live rate-shop: weight from cart items, origin from stock location, destination from cart address → return the option's courier rate. **Gate:** returns the right courier's rate (mocked Torod); **missing weight ⇒ unavailable; unserviceable city ⇒ unavailable** (tests) — never a guessed price; `TOROD_DEFAULT_WEIGHT_KG` applies only when set.
+- **T2.2 `calculatePrice`** — live rate-shop: weight from cart items, **package dims from `TOROD_DEFAULT_PACKAGE_CM`**, origin from stock location, destination from cart address → return the option's courier rate. **Gate:** returns the right courier's rate using the default package (mocked Torod); **missing weight ⇒ unavailable; no package ⇒ unavailable; unserviceable city ⇒ unavailable** (tests) — never a guessed price; `TOROD_DEFAULT_WEIGHT_KG` / `TOROD_DEFAULT_PACKAGE_CM` apply only when set.
 - **T2.3 `validateFulfillmentData`** — serviceability + city-code mapping (if Torod requires a city code, not free text). **Gate:** valid data passes; unserviceable/unknown city rejected with a clear `KsaError`.
 
 ## S3 — Book + label + cancel
-- **T3.1 `createFulfillment`** — book the shipment at fulfillment → store tracking number + Torod shipment ref in fulfillment data; cache the label if Torod returns it synchronously. **Gate:** sandbox booking returns a tracking number + shipment ref.
+- **T3.1 `createFulfillment`** — book the shipment at fulfillment; **package from fulfillment-data override (explicit dims or `torodPackageTemplateId`) else `TOROD_DEFAULT_PACKAGE_CM`** → store tracking number + Torod shipment ref in fulfillment data; cache the label if Torod returns it synchronously. **Gate:** sandbox booking returns a tracking number + shipment ref; the package override is honored.
 - **T3.2 `getFulfillmentDocuments`** (and return/shipment document methods as Medusa requires) — fetch the **label on demand** from Torod. **Gate:** label retrievable on demand whether Torod returns it sync or async.
 - **T3.3 `cancelFulfillment`** — cancel a booked shipment if cancellable; terminal states are an idempotent no-op. **Gate:** cancel works; double-cancel / already-delivered is a no-op (test).
 
