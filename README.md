@@ -120,7 +120,7 @@ Each package publishes independently to npm with its own README and changelog. *
 | `medusa-notification-unifonic` | [`notifications/unifonic`](./packages/notifications/unifonic) | Arabic SMS / WhatsApp via Unifonic | 📋 Planned |
 | `medusa-notification-taqnyat` | [`notifications/taqnyat`](./packages/notifications/taqnyat) | Arabic SMS via Taqnyat | 📋 Planned |
 | **Compliance & tooling** | | | |
-| `medusa-plugin-zatca` | [`zatca`](./packages/zatca) | **ZATCA / Fatoora Phase 2** e-invoicing — UBL XML, QR, signing, clearance _(flagship)_ | 📋 Planned |
+| `medusa-plugin-zatca` | [`zatca`](./packages/zatca) | **ZATCA / Fatoora Phase 2** e-invoicing — Simplified (B2C) reporting, signed UBL + QR _(flagship; B2B clearance & multi-EGS planned)_ | 📋 Planned |
 | `medusa-plugin-saudi-address` | [`address-saudi`](./packages/address-saudi) | Saudi National Address validation | 📋 Planned |
 | `create-medusa-ksa-app` | [`create-medusa-ksa-app`](./packages/create-medusa-ksa-app) | One-command KSA store scaffolder | 📋 Planned |
 
