@@ -1,0 +1,32 @@
+{
+  "name": "demo-store",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Medusa app wiring the Medusa KSA suite — dev + e2e harness (NOT published).",
+  "dependencies": {
+    "@medusajs/admin-sdk": "^2.13.0",
+    "@medusajs/cli": "^2.13.0",
+    "@medusajs/framework": "^2.13.0",
+    "@medusajs/medusa": "^2.13.0",
+    "awilix": "^8.0.1",
+    "medusa-payment-moyasar": "workspace:*",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@swc/core": "^1.7.28",
+    "@types/node": "^20.14.0",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "medusa build",
+    "db:migrate": "medusa db:migrate",
+    "dev": "medusa develop",
+    "e2e:moyasar": "medusa exec ./src/scripts/e2e-moyasar.ts",
+    "start": "medusa start"
+  }
+}

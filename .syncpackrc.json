@@ -7,6 +7,13 @@
       "dependencyTypes": ["prod"],
       "packages": ["**"],
       "pinVersion": "workspace:*"
+    },
+    {
+      "label": "The demo-store app (unpublished) consumes suite packages via the workspace protocol",
+      "dependencies": ["@medusa-ksa/*", "medusa-payment-*", "medusa-fulfillment-*", "medusa-notification-*", "medusa-plugin-*"],
+      "dependencyTypes": ["prod"],
+      "packages": ["demo-store"],
+      "pinVersion": "workspace:*"
     }
   ],
   "semverGroups": [
