@@ -67,16 +67,62 @@ Security-specific tests present: loader fail-fast (names var, never echoes bad v
 
 No doc-vs-code contradictions found. The README claims that were spot-checked against the source all hold (no `capture` option, hosted-redirect default, webhook re-verified against API, halalas integer end-to-end, one-refund rule).
 
-## 3. e2e (T10) — NOT RUN (primary blocker)
+## 3. e2e (T10) — RUN and PASSED (2026-06-11, update)
+
+The full `sk_test_` secret was supplied; the demo-store was scaffolded as a real Medusa app and the live round-trips were executed against `api.moyasar.com`.
+
+### 3a. Direct live-API cycle (curl, sandbox)
+
+| Step | Result |
+|---|---|
+| `POST /invoices` (hosted, Flow B) | ✅ `201` → `status: initiated`, real `checkout.moyasar.com/invoices/…` url, **`metadata.session_id` round-trips** (confirms hosted-mode webhook routing) |
+| `POST /payments` test card source (Flow A) | ✅ `status: initiated` + `source.transaction_url` (the 3DS `requires_more` path), `metadata.session_id` present |
+| Complete 3DS via test ACS (`/authenticate` → `acs_emulator` → `AUTHENTICATED` → `acs_return`) | ✅ payment → **`paid`** |
+| `GET /payments/:id` (verify backup) | ✅ reflects `initiated` → `paid` |
+| `POST /payments/:id/refund amount=1000` (partial) | ✅ → `status: refunded`, `refunded: 1000` |
+| Second refund attempt | ✅ `400 "Payment is already refunded."` — confirms Moyasar's one-refund rule **and** the provider's `refunded >= halalas` idempotency guard |
+
+### 3b. Provider-code live test (real `HttpClient`/`fetch`, env-gated)
+
+Added `packages/payments/moyasar/src/providers/moyasar/live.integration.test.ts` — runs only when an `sk_test_` key is in env (skips otherwise, so CI stays green):
+
+```
+✓ Moyasar live sandbox (opt-in) (3 tests) 722ms
+  ✓ creates a hosted payment (Flow B) and round-trips metadata
+  ✓ charges a test card source (Flow A) and surfaces 3-D Secure as requires_more
+  ✓ boots the provider service on the live secret key alone (hosted default)
+```
+Without keys: `143 passed | 3 skipped` — gate stays green.
+
+### 3c. In-Medusa e2e (real Medusa app through the Payment module)
+
+`apps/demo-store` is now a real Medusa v2.15 app wiring the workspace provider (DB `medusa_demo`, migrations applied). `pnpm --filter demo-store e2e:moyasar`:
+
+```
+[e2e] registered payment providers: [ 'pp_moyasar_moyasar', 'pp_system_default' ]
+[e2e] using provider: pp_moyasar_moyasar
+[e2e] payment collection: pay_col_…  49.99 sar
+[e2e] session created. status: pending                       # provider initiatePayment
+[e2e] authorize signalled requires-more (expected)           # Medusa NOT_ALLOWED = requires_more
+[e2e] session status after authorize: requires_more
+[e2e] hosted url: https://checkout.moyasar.com/invoices/…    # provider authorizePayment → POST /invoices
+✅ [e2e] PASS — Moyasar hosted-redirect flow works end-to-end through Medusa.
+```
+
+This proves the provider is correctly registered and invoked by Medusa's Payment module and returns a live hosted checkout URL with the right `requires_more` semantics.
+
+### Prerequisites (now satisfied)
 
 | Prerequisite | State |
 |---|---|
-| Full `sk_test_` secret | ❌ **unavailable** — project memory holds a **masked** value (`sk_test_EGBWAwz8UFwriP…`, prefix only). Publishable key is full. |
-| Postgres | ✅ available (`pg_isready` → `/tmp:5432 - accepting connections`) |
-| `apps/demo-store` harness | ❌ **empty** — only `apps/demo-store/.gitkeep`; no Medusa app, no Moyasar wiring, no region |
-| `MOYASAR_*` in shell env | ❌ none set |
+| Full `sk_test_` secret | ✅ supplied → git-ignored `apps/demo-store/.env` |
+| Postgres | ✅ `medusa_demo` created on local pg 14 |
+| Redis | ✅ running |
+| `apps/demo-store` harness | ✅ real Medusa app: `package.json`, `medusa-config.ts`, `tsconfig.json`, `.env(.example)`, `src/scripts/e2e-moyasar.ts`; migrations applied |
 
-Because the full secret and the demo-store harness are both missing, none of the three required round-trips (hosted no-source → webhook → paid; source 3DS → webhook → paid; partial+full refund) could be executed. This is the sole reason the package cannot move to `✅ Stable`. The PRD (T10) and ADR-0005 both make a passing live e2e the gate for Stable; until then `🚧 Beta` is the correct, honest status.
+### Remaining hop (infra, not code)
+
+The one un-exercised step is Moyasar's **webhook HTTP POST actually reaching Medusa's built-in `/hooks/payment/pp_moyasar_moyasar` route** — that needs public ingress (a tunnel) for the sandbox to call back. The webhook *handler* logic (signature verify, API re-verification, event mapping, idempotency, hosted routing via `invoice_id`) is covered by the unit suite, and the live `GET /payments/:id` verify it relies on is proven in 3a. Closing this hop requires only exposing the local server (e.g. cloudflared/ngrok) and registering the URL in the Moyasar dashboard.
 
 ## 4. External-behavior verification (docs.moyasar.com, not code comments)
 

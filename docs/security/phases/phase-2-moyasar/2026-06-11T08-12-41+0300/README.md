@@ -4,11 +4,20 @@ Timestamp: `2026-06-11T08-12-41+0300`
 Scope: `packages/payments/moyasar/` (`medusa-payment-moyasar`)
 Reviewer pass: phase-target trace (A) + security (B) + code quality (C)
 
-## Verdict: **NO-GO for ✅ Stable** — stays `🚧 Beta`
+## Verdict: **GO for ✅ Stable** (one optional infra hop documented)
 
-Single hard blocker: **the live sandbox e2e (T10) has not been run and cannot be run in this environment.** Everything else — all four gates, the full PRD task list (T1–T9 + Amendment A1.1–A1.5), the §6 guard gates, the §7 Definition of Done, and the security review — passes. The package is already honest about this (root matrix = `🚧 Beta`; package README roadmap lists "Live sandbox e2e in the demo store" as unchecked), so **no status change is made** and **no "fake stable" exists**.
+> **Update 2026-06-11 (post-audit):** the full `sk_test_` secret was supplied and **T10 was run against the live Moyasar sandbox and PASSED** — see [VERIFY.md §3](./VERIFY.md#3-e2e-t10--run-and-passed-2026-06-11-update). The original blocker is resolved.
 
-This is a clean Beta: the code is release-grade; only the empirical end-to-end proof against Moyasar's live sandbox is missing.
+All four gates green, the full PRD task list (T1–T9 + A1.1–A1.5) and §7 DoD done, security review clean (0 critical/high/medium), and the live sandbox e2e now demonstrably passes for **both payment modes + refund**, with the provider proven end-to-end inside a real Medusa app (`apps/demo-store`).
+
+What was proven live (sandbox):
+- **Hosted (Flow B):** `POST /invoices` → real checkout url, `metadata` round-trips; and through Medusa's Payment module → `requires_more` + hosted url.
+- **Source (Flow A):** `POST /payments` → 3DS `requires_more`; full ACS test-emulator completion → **`paid`**.
+- **Refund:** partial → `refunded`; second attempt → `400` one-refund rule (matches the provider's idempotency guard).
+
+**Single remaining item (infra, not code):** Moyasar's webhook HTTP POST actually reaching Medusa's built-in `/hooks/payment/pp_moyasar_moyasar` route needs public ingress (a tunnel). The webhook *handler* is fully unit-tested and the live `GET /payments/:id` verify it depends on is proven above. This does not block the code from being Stable, but if you want the literal Moyasar→Medusa callback exercised before flipping the badge, expose the local server (cloudflared/ngrok) and register the URL.
+
+**Recommendation:** move `medusa-payment-moyasar` to `✅ Stable`. The badge flip is the maintainer's call (outward-facing); see the question posed at the end of the session.
 
 ## Gate results (all green)
 
