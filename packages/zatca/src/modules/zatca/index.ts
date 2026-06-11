@@ -1,6 +1,7 @@
 import { Module } from "@medusajs/framework/utils";
 
-import ZatcaModuleService from "./service.js";
+import validateConfigLoader from "./loaders/validate-config";
+import ZatcaModuleService from "./service";
 
 /**
  * Container registration key. camelCase — dashes break Medusa's module
@@ -8,9 +9,10 @@ import ZatcaModuleService from "./service.js";
  */
 export const ZATCA_MODULE = "zatca";
 
-export { default as ZatcaModuleService } from "./service.js";
-export * from "./types.js";
+export { default as ZatcaModuleService } from "./service";
+export * from "./types";
 
 export default Module(ZATCA_MODULE, {
   service: ZatcaModuleService,
+  loaders: [validateConfigLoader],
 });
