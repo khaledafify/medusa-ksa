@@ -25,7 +25,7 @@
 - `packages/payments/moyasar/**` (structure, dual tsconfig, vitest, core usage, test rigor — your quality bar)
 
 ## PREREQUISITES (confirm before S2; if missing → STOP and report)
-- `TOROD_API_KEY` (sandbox) in `apps/demo-store/.env` (git-ignored).
+- `TOROD_CLIENT_ID` + `TOROD_CLIENT_SECRET` in `apps/demo-store/.env` (git-ignored — already added). **⚠️ Confirm these are sandbox/test credentials before any booking task (S3+): a live `createFulfillment` creates a real courier shipment. If sandbox status is unconfirmed, STOP and ask before S3.**
 - Access to docs.torod.co.
 
 ---
@@ -36,7 +36,8 @@ Create `packages/fulfillment/torod/src/providers/torod/constants.ts` and import 
 
 - `PROVIDER_ID = "torod"` (the provider `identifier`).
 - `TOROD_PREFIX = "torod"` (KsaError prefix).
-- `ENV` map: `TOROD_API_KEY`, `TOROD_BASE_URL`, `TOROD_DEFAULT_WEIGHT_KG`, `TOROD_WEBHOOK_SECRET`.
+- `ENV` map: `TOROD_CLIENT_ID`, `TOROD_CLIENT_SECRET`, `TOROD_BASE_URL`, `TOROD_DEFAULT_WEIGHT_KG`, `TOROD_WEBHOOK_SECRET`. (Torod uses **OAuth client-credentials**, not a single API key.)
+- `TOROD_TOKEN` constants — the token endpoint path + the bearer header name (from the notes); the client exchanges id+secret for a short-lived token and **caches it until expiry, refreshing on 401**. No token logic inline outside the client.
 - `TOROD_ENDPOINTS` — every API path (rates, couriers, create shipment, label, track, cancel, return, cities) as named fields, filled from `TOROD-API-NOTES.md`. No path string inline in `client.ts`.
 - `optionIdForCourier(courierCode)` + `courierCodeFromOptionId(id)` — the **only** way to build/parse a fulfillment-option id; never hand-concatenate.
 - `FULFILLMENT_DATA_KEYS` — every key the provider reads/writes on fulfillment/session data (`torodShipmentId`, `torodCourierCode`, `trackingNumber`, `labelUrl`, `cityCode`, …).
@@ -88,8 +89,8 @@ pnpm lint                                          # eslint + dependency-cruiser
 ### S1 — Scaffold, constants, loader, client
 - [ ] **T1.1** Scaffold the package (package.json `medusa-fulfillment-torod`, `build: medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), dual tsconfig + vitest (mirror moyasar), `.env.example`. *Accept:* install resolves core; typecheck; syncpack consistent.
 - [ ] **T1.2** `constants.ts` — the full constants contract above. *Accept:* every later file imports from it; zero target literals inline.
-- [ ] **T1.3** Options schema + `createLoader` (`TOROD_API_KEY` required; `TOROD_BASE_URL`/`TOROD_DEFAULT_WEIGHT_KG`/`TOROD_WEBHOOK_SECRET` optional). *Accept:* boot throws `KsaError` naming the env var on missing key (test); boots otherwise.
-- [ ] **T1.4** `TorodClient` over core `HttpClient` (base URL + auth from constants/notes). *Accept:* mocked-fetch tests — auth header correct, non-2xx → `KsaError`, no key in error.
+- [ ] **T1.3** Options schema + `createLoader` (`TOROD_CLIENT_ID` **and** `TOROD_CLIENT_SECRET` required; `TOROD_BASE_URL`/`TOROD_DEFAULT_WEIGHT_KG`/`TOROD_WEBHOOK_SECRET` optional). *Accept:* boot throws `KsaError` naming the missing env var when **either** id or secret is absent (test); boots otherwise.
+- [ ] **T1.4** `TorodClient` over core `HttpClient` — **OAuth client-credentials**: exchange `TOROD_CLIENT_ID`+`TOROD_CLIENT_SECRET` at the token endpoint for a bearer token, **cache until expiry, refresh on 401**, attach to every request. *Accept:* mocked-fetch tests — token fetched once and reused, refreshed on 401, bearer attached, non-2xx → `KsaError`, **no client id/secret in any error message**.
 
 ### S2 — Provider skeleton, options, rates
 - [ ] **T2.1** Provider class skeleton (`extends AbstractFulfillmentProviderService`, `static identifier = PROVIDER_ID`); register in `apps/demo-store/medusa-config.ts`. *Accept:* demo-store boots; provider appears in Settings → Shipping when adding a Shipping Option (admin compatibility — verify).

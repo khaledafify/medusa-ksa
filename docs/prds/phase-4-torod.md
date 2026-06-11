@@ -19,15 +19,15 @@
 
 ## 2. Config
 
-`TOROD_API_KEY` (required, env-first via core `createLoader`). Optional: `TOROD_BASE_URL`, `TOROD_DEFAULT_WEIGHT_KG`, `TOROD_WEBHOOK_SECRET`. Sandbox vs live per Torod's key/convention (verify).
+`TOROD_CLIENT_ID` + `TOROD_CLIENT_SECRET` (**both required**, env-first via core `createLoader`). Torod authenticates with **OAuth client-credentials** — the client exchanges id+secret for a **short-lived bearer token** (cache until expiry, refresh on 401); verify the exact token endpoint + expiry + header against docs.torod.co (S0). Optional: `TOROD_BASE_URL`, `TOROD_DEFAULT_WEIGHT_KG`, `TOROD_WEBHOOK_SECRET`. **Sandbox vs live is unconfirmed for the provided keys — confirm before any booking (a live booking creates a real shipment).**
 
 ## 3. Verify against docs.torod.co (never assume)
 
-Auth scheme; the **rate / rate-shop** endpoint (inputs + per-courier response); how **couriers** are listed; **create shipment / booking** (sync vs async, returned tracking/label); **label** retrieval; **tracking** (webhook push vs polling endpoint) + event shape + signature/token scheme; **cancel**; **returns**; **serviceable cities** + whether a city **code** (not free text) is required.
+Auth scheme (**OAuth client-credentials** — token endpoint, expiry, how to attach the bearer); the **rate / rate-shop** endpoint (inputs + per-courier response); how **couriers** are listed; **create shipment / booking** (sync vs async, returned tracking/label); **label** retrieval; **tracking** (webhook push vs polling endpoint) + event shape + signature/token scheme; **cancel**; **returns**; **serviceable cities** + whether a city **code** (not free text) is required.
 
 ## 4. Slices (each: test-first, small clean commits, gates green before advancing)
 
-- **S1 — Scaffold + client.** Package (`medusa-fulfillment-torod`, scripts `medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), dual tsconfig + vitest (mirror moyasar), `.env.example`. Provider skeleton extending `AbstractFulfillmentProviderService` + `createLoader` (`TOROD_API_KEY`, fail-fast). `TorodClient` over core `HttpClient`.
+- **S1 — Scaffold + client.** Package (`medusa-fulfillment-torod`, scripts `medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), dual tsconfig + vitest (mirror moyasar), `.env.example`. Provider skeleton extending `AbstractFulfillmentProviderService` + `createLoader` (`TOROD_CLIENT_ID + TOROD_CLIENT_SECRET`, fail-fast). `TorodClient` over core `HttpClient`.
   *Accept:* boots fail-fast on missing key; client unit tests (mocked fetch) — auth header, errors→`KsaError`, no key leak.
 - **S2 — Options + rates.** `getFulfillmentOptions` (one per courier). `calculatePrice` (live rate-shop; weight/origin/destination; **unavailable on missing inputs**; default-weight option). `validateFulfillmentData` (serviceability / city-code mapping).
   *Accept:* options list per courier; `calculatePrice` returns the right courier's rate; **a missing-weight / unserviceable-city test returns unavailable, never a guessed price**.

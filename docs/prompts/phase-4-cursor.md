@@ -44,15 +44,15 @@ pnpm lint
 ```
 
 ## PREREQUISITE (confirm before S2 — if missing, STOP and report)
-A **Torod API account + sandbox key** (`TOROD_API_KEY`) in `apps/demo-store/.env` (git-ignored), and access to docs.torod.co to verify endpoints. **S0:** before S2, read docs.torod.co and write a short `packages/fulfillment/torod/TOROD-API-NOTES.md` capturing the real auth scheme, rate/booking/label/tracking/cancel/returns/cities endpoints + the webhook-vs-polling answer. All later tasks cite it. If the docs contradict the PRD's assumptions, STOP and report before coding.
+A **Torod API account + sandbox key** (`TOROD_CLIENT_ID + TOROD_CLIENT_SECRET`) in `apps/demo-store/.env` (git-ignored), and access to docs.torod.co to verify endpoints. **S0:** before S2, read docs.torod.co and write a short `packages/fulfillment/torod/TOROD-API-NOTES.md` capturing the real auth scheme, rate/booking/label/tracking/cancel/returns/cities endpoints + the webhook-vs-polling answer. All later tasks cite it. If the docs contradict the PRD's assumptions, STOP and report before coding.
 
 ---
 
 # TASKS (in order)
 
 ## S1 — Scaffold + client
-- **T1.1 Scaffold** `packages/fulfillment/torod`: package.json (`medusa-fulfillment-torod`, `build: medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), `tsconfig.json`+`tsconfig.build.json` (mirror moyasar), `vitest.config.ts`, `.env.example` (`TOROD_API_KEY`, `TOROD_BASE_URL?`, `TOROD_DEFAULT_WEIGHT_KG?`, `TOROD_WEBHOOK_SECRET?`). **Gate:** `pnpm install` resolves core; typecheck; syncpack consistent.
-- **T1.2 Loader + options** (`createLoader`, `TOROD_API_KEY` required, fail-fast). **Gate:** boot throws `KsaError` naming the var on missing key (test); boots with valid config.
+- **T1.1 Scaffold** `packages/fulfillment/torod`: package.json (`medusa-fulfillment-torod`, `build: medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), `tsconfig.json`+`tsconfig.build.json` (mirror moyasar), `vitest.config.ts`, `.env.example` (`TOROD_CLIENT_ID + TOROD_CLIENT_SECRET`, `TOROD_BASE_URL?`, `TOROD_DEFAULT_WEIGHT_KG?`, `TOROD_WEBHOOK_SECRET?`). **Gate:** `pnpm install` resolves core; typecheck; syncpack consistent.
+- **T1.2 Loader + options** (`createLoader`, `TOROD_CLIENT_ID + TOROD_CLIENT_SECRET` required, fail-fast). **Gate:** boot throws `KsaError` naming the var on missing key (test); boots with valid config.
 - **T1.3 `TorodClient`** over core `HttpClient` (base URL, auth per TOROD-API-NOTES). **Gate:** mocked-fetch tests — auth header correct, non-2xx → `KsaError`, no key in error messages.
 
 ## S2 — Options + rates
