@@ -6,7 +6,7 @@ import type {
   ZatcaInvoiceLine,
 } from "./xml-builder";
 
-interface SnapshotTotals {
+export interface SnapshotTotals {
   taxInclusiveHalalas: number;
   taxHalalas: number;
 }
@@ -220,6 +220,12 @@ function computeTotals(snapshot: InvoiceLinesSnapshot): SnapshotTotals {
 
 function snapshotTotals(snapshot: InvoiceLinesSnapshot): SnapshotTotals {
   return snapshot.totals ?? computeTotals(snapshot);
+}
+
+export function originalInvoiceTotals(
+  originalInvoice: OriginalInvoiceForRefund,
+): SnapshotTotals {
+  return snapshotTotals(normalizeSnapshot(originalInvoice.lines_snapshot));
 }
 
 function parseXml(xml: string) {
