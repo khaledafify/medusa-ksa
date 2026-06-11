@@ -163,7 +163,7 @@ Use a `sk_test_…` key and the plugin runs entirely against Moyasar's sandbox a
 ## 🗺️ Roadmap
 
 - [ ] Saved payment methods (tokenization)
-- [ ] Live sandbox e2e in the demo store
+- [x] Live sandbox e2e in the demo store
 
 ## 📄 License
 
