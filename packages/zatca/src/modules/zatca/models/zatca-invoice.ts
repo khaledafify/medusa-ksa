@@ -50,14 +50,14 @@ const ZatcaInvoice = model
     lines_snapshot: model.json().nullable(),
     /** UUID v4 embedded in the UBL document. */
     uuid: model.text(),
-    /** Invoice Counter Value — sequential per EGS, from 1. */
-    icv: model.number(),
-    /** Previous Invoice Hash — SHA-256 of the prior invoice's XML. */
-    pih: model.text(),
-    /** SHA-256 of this invoice's canonical XML. */
-    invoice_hash: model.text(),
-    /** Signed UBL 2.1 XML — stored in the DB as text in v1. */
-    xml: model.text(),
+    /** Invoice Counter Value — null only for never-submitted local failures. */
+    icv: model.number().nullable(),
+    /** Previous Invoice Hash — null only for never-submitted local failures. */
+    pih: model.text().nullable(),
+    /** SHA-256 of this invoice's canonical XML; null before chain entry. */
+    invoice_hash: model.text().nullable(),
+    /** Signed UBL 2.1 XML; null for local reconciliation failures. */
+    xml: model.text().nullable(),
     /** TLV 9-tag Base64 QR. Stamped during generation (S3). */
     qr_code: model.text().nullable(),
     status: model

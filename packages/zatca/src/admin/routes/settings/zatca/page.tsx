@@ -15,6 +15,10 @@ import type React from "react";
 import { useState } from "react";
 
 import { sdk } from "../../../lib/client";
+import {
+  ZATCA_DOCUMENT_TYPE,
+  ZATCA_INVOICE_STATUS,
+} from "../../../../modules/zatca/lib/lifecycle";
 
 /**
  * Settings → ZATCA — the suite's one custom UI (CLAUDE.md §6): status
@@ -37,15 +41,11 @@ const REMEDIATION_ACTION = {
   REVIEW_ZATCA_REJECTION: "review_zatca_rejection",
 } as const;
 
-const REMEDIATION_DOCUMENT_TYPE = {
-  INVOICE: "invoice",
-  CREDIT_NOTE: "credit_note",
-  DEBIT_NOTE: "debit_note",
-} as const;
+const REMEDIATION_DOCUMENT_TYPE = ZATCA_DOCUMENT_TYPE;
 
 const TERMINAL_STATUS = {
-  REJECTED: "rejected",
-  FAILED: "failed",
+  REJECTED: ZATCA_INVOICE_STATUS.REJECTED,
+  FAILED: ZATCA_INVOICE_STATUS.FAILED,
 } as const;
 
 type RemediationDocumentType =
@@ -54,14 +54,14 @@ type RemediationDocumentType =
 type TerminalStatus = (typeof TERMINAL_STATUS)[keyof typeof TERMINAL_STATUS];
 
 const REMEDIATION_DOCUMENT_TYPE_LABEL: Record<RemediationDocumentType, string> = {
-  [REMEDIATION_DOCUMENT_TYPE.INVOICE]: "invoice",
+  [REMEDIATION_DOCUMENT_TYPE.INVOICE]: ZATCA_DOCUMENT_TYPE.INVOICE,
   [REMEDIATION_DOCUMENT_TYPE.CREDIT_NOTE]: "credit note",
   [REMEDIATION_DOCUMENT_TYPE.DEBIT_NOTE]: "debit note",
 };
 
 const TERMINAL_STATUS_LABEL: Record<TerminalStatus, string> = {
-  [TERMINAL_STATUS.REJECTED]: "rejected",
-  [TERMINAL_STATUS.FAILED]: "failed",
+  [TERMINAL_STATUS.REJECTED]: ZATCA_INVOICE_STATUS.REJECTED,
+  [TERMINAL_STATUS.FAILED]: ZATCA_INVOICE_STATUS.FAILED,
 };
 
 interface ZatcaSummary {

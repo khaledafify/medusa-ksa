@@ -124,6 +124,10 @@ export async function processPendingReports(
             icv, attempts, created_at, submitted_at, uuid, invoice_hash, xml
        from ${ZATCA_TABLE.INVOICE}
       where status = '${ZATCA_INVOICE_STATUS.PENDING}' and deleted_at is null
+        and icv is not null
+        and pih is not null
+        and invoice_hash is not null
+        and xml is not null
       order by created_at
       limit ${Math.trunc(limit)}
         for update skip locked`,

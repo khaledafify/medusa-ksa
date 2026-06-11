@@ -54,7 +54,7 @@ export interface ZatcaRemediationNotice {
 function documentLabel(documentType: ZatcaTerminalDocument["document_type"]): string {
   if (documentType === ZATCA_DOCUMENT_TYPE.CREDIT_NOTE) return "credit note";
   if (documentType === ZATCA_DOCUMENT_TYPE.DEBIT_NOTE) return "debit note";
-  return "invoice";
+  return ZATCA_DOCUMENT_TYPE.INVOICE;
 }
 
 function actionFor(

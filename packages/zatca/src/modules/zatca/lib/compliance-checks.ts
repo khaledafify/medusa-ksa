@@ -4,6 +4,12 @@ import { KsaError, KsaErrorCodes } from "@medusa-ksa/core";
 
 import type { ComplianceCheckResponse } from "./fatoora-client";
 import { SEED_PIH } from "./hash-chain";
+import {
+  ZATCA_COMPLIANCE_SAMPLE_INVOICE_TYPE_CODE,
+  ZATCA_COMPLIANCE_SAMPLE_TYPE,
+  ZATCA_COMPLIANCE_SAMPLE_TYPES,
+  type ZatcaComplianceSampleType,
+} from "./lifecycle";
 import { generateQr } from "./qr";
 import { signInvoice } from "./signer";
 import {
@@ -23,20 +29,12 @@ import {
  * locally from the seed PIH. They never touch the real invoice chain.
  */
 
-export const COMPLIANCE_SAMPLE_TYPES = [
-  "simplified_invoice",
-  "simplified_credit_note",
-  "simplified_debit_note",
-] as const;
+export const COMPLIANCE_SAMPLE_TYPES = ZATCA_COMPLIANCE_SAMPLE_TYPES;
 
-export type ComplianceSampleType = (typeof COMPLIANCE_SAMPLE_TYPES)[number];
+export type ComplianceSampleType = ZatcaComplianceSampleType;
 
 /** UN/CEFACT 1001 code per sample type. */
-const TYPE_CODES: Record<ComplianceSampleType, string> = {
-  simplified_invoice: "388",
-  simplified_credit_note: "381",
-  simplified_debit_note: "383",
-};
+const TYPE_CODES = ZATCA_COMPLIANCE_SAMPLE_INVOICE_TYPE_CODE;
 
 export interface ComplianceCheckSubmission {
   signedXml: string;
@@ -92,7 +90,8 @@ export async function runComplianceChecks(
   const invoiceSerial = "CHK-0001";
 
   for (const documentType of COMPLIANCE_SAMPLE_TYPES) {
-    const isNote = documentType !== "simplified_invoice";
+    const isNote =
+      documentType !== ZATCA_COMPLIANCE_SAMPLE_TYPE.SIMPLIFIED_INVOICE;
     const serial = `CHK-${String(icv).padStart(4, "0")}`;
     const uuid = randomUUID();
 

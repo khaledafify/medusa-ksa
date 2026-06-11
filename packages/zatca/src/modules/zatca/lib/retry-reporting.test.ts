@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { SqlExecutor } from "./hash-chain";
+import { SEED_PIH, type SqlExecutor } from "./hash-chain";
 import {
   backoffMs,
   BASE_BACKOFF_MS,
@@ -119,8 +119,8 @@ describe.runIf(databaseUrl)("processPendingReports (postgres)", () => {
     await pool.query(
       `insert into ${schema}.zatca_invoice
          (id, order_id, source_type, source_id, document_type, parent_invoice_id,
-          icv, status, attempts, created_at, submitted_at, uuid, invoice_hash, xml)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          icv, status, attempts, created_at, submitted_at, uuid, pih, invoice_hash, xml)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
       [
         id,
         `order_${id}`,
@@ -134,6 +134,7 @@ describe.runIf(databaseUrl)("processPendingReports (postgres)", () => {
         over.created_at ?? NOW,
         over.submitted_at ?? null,
         `uuid-${id}`,
+        SEED_PIH,
         "hash=",
         "<Invoice/>",
       ],
@@ -173,6 +174,7 @@ describe.runIf(databaseUrl)("processPendingReports (postgres)", () => {
         reported_at timestamptz,
         zatca_response jsonb,
         uuid text not null,
+        pih text not null,
         invoice_hash text not null,
         xml text not null,
         updated_at timestamptz not null default now(),

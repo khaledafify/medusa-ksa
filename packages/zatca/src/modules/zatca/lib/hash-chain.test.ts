@@ -63,10 +63,10 @@ describe.runIf(databaseUrl)("hash chain under concurrency (advisory lock)", () =
     await pool.query(
       `create table ${schema}.zatca_invoice (
          id text primary key,
-         icv integer not null unique,
+         icv integer unique,
          status text not null default 'pending',
-         pih text not null,
-         invoice_hash text not null
+         pih text,
+         invoice_hash text
        )`,
     );
   });
@@ -137,6 +137,56 @@ describe.runIf(databaseUrl)("hash chain under concurrency (advisory lock)", () =
       await client.query(`set search_path to ${schema}`);
       const head = await readChainHead(executor(client));
       expect(nextAllocation(head)).toEqual({ icv: 2, pih: "rejected-hash" });
+    } finally {
+      client.release();
+    }
+  });
+
+  it("uses a submitted failed document as the next PIH source", async () => {
+    await pool.query(`truncate table ${schema}.zatca_invoice`);
+    await pool.query(
+      `insert into ${schema}.zatca_invoice (id, icv, status, pih, invoice_hash)
+       values ($1, $2, $3, $4, $5)`,
+      ["inv_failed_submitted", 1, "failed", SEED_PIH, "failed-submitted-hash"],
+    );
+
+    const client = await pool.connect();
+    try {
+      await client.query(`set search_path to ${schema}`);
+      const head = await readChainHead(executor(client));
+      expect(nextAllocation(head)).toEqual({
+        icv: 2,
+        pih: "failed-submitted-hash",
+      });
+    } finally {
+      client.release();
+    }
+  });
+
+  it("ignores local failed rows without chain fields", async () => {
+    await pool.query(`truncate table ${schema}.zatca_invoice`);
+    await pool.query(
+      `insert into ${schema}.zatca_invoice (id, icv, status, pih, invoice_hash)
+       values ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)`,
+      [
+        "inv_reported",
+        1,
+        "reported",
+        SEED_PIH,
+        "reported-hash",
+        "inv_failed_local",
+        null,
+        "failed",
+        null,
+        null,
+      ],
+    );
+
+    const client = await pool.connect();
+    try {
+      await client.query(`set search_path to ${schema}`);
+      const head = await readChainHead(executor(client));
+      expect(nextAllocation(head)).toEqual({ icv: 2, pih: "reported-hash" });
     } finally {
       client.release();
     }

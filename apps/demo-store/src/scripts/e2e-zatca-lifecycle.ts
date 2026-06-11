@@ -407,6 +407,18 @@ function assertReturnLineAccurate(row: ZatcaInvoiceRow, expectedQuantity: number
   }
 }
 
+function assertLocalFailureUnchained(row: ZatcaInvoiceRow): void {
+  if (row.status !== ZATCA_INVOICE_STATUS.FAILED) {
+    throw new Error(`${row.id} status ${row.status}; expected failed`);
+  }
+  if (row.icv !== null || row.pih !== null || row.invoice_hash !== null || row.xml !== null) {
+    throw new Error(`${row.id} unexpectedly touched the ZATCA chain`);
+  }
+  if (row.qr_code !== null) {
+    throw new Error(`${row.id} unexpectedly has a QR code`);
+  }
+}
+
 function assertSnapshotTotals(
   row: ZatcaInvoiceRow,
   taxBase: DerivedSimplifiedInvoiceTaxBase,
@@ -429,6 +441,52 @@ function assertSnapshotTotals(
   if (tax !== taxBase.expectedTaxHalalas) {
     throw new Error(`${row.id} TaxAmount ${tax}; expected ${taxBase.expectedTaxHalalas}`);
   }
+}
+
+async function assertForcedFailureChainProof(
+  service: InstanceType<typeof ZatcaModuleService>,
+  input: {
+    failed: ZatcaInvoiceRow;
+    previous: ZatcaInvoiceRow;
+    next: ZatcaInvoiceRow;
+  },
+): Promise<void> {
+  const manager = (service as unknown as {
+    manager?: { execute(sql: string, params?: unknown[]): Promise<unknown[]> };
+  }).manager;
+  if (!manager) {
+    throw new Error("ZATCA service manager is unavailable for chain proof query");
+  }
+  const [row] = (await manager.execute(
+    `select
+        (select max(icv) from zatca_invoice where deleted_at is null) as max_icv,
+        concat_ws(':', f.icv, f.pih, f.invoice_hash) as failed_chain_fields,
+        n.pih as next_pih
+       from zatca_invoice f
+       cross join zatca_invoice n
+      where f.id = ? and n.id = ?`,
+    [input.failed.id, input.next.id],
+  )) as {
+    max_icv: number | string;
+    failed_chain_fields: string;
+    next_pih: string;
+  }[];
+  if (!row) {
+    throw new Error("forced failure chain proof query returned no rows");
+  }
+  const maxIcv = Number(row.max_icv);
+  if (maxIcv !== input.next.icv) {
+    throw new Error(`max(icv) ${maxIcv}; expected next invoice ICV ${input.next.icv}`);
+  }
+  if (row.failed_chain_fields !== "") {
+    throw new Error(`forced failure has chain fields: ${row.failed_chain_fields}`);
+  }
+  if (row.next_pih !== input.previous.invoice_hash) {
+    throw new Error("next invoice PIH does not match previous submitted hash");
+  }
+  console.log(
+    `ZATCA forced failure chain proof: max_icv=${maxIcv}, failed_chain_fields="", next_pih_matches_previous=true`,
+  );
 }
 
 export default async function e2eZatcaLifecycle({ container }: ExecArgs) {
@@ -485,6 +543,65 @@ export default async function e2eZatcaLifecycle({ container }: ExecArgs) {
   assertSnapshotTotals(inclusiveInvoice, inclusiveTaxBase);
   await ensureZatcaInvoiceOrderLink(container, inclusiveOrder.id, inclusiveResult.id);
   reportedRows.push(inclusiveInvoice);
+
+  const chainPreviousOrder = await createDemoOrder(
+    container,
+    "ZATCA chain continuity previous",
+  );
+  const chainPrevious = await issueOriginalInvoice({
+    container,
+    service,
+    order: chainPreviousOrder,
+    serialNumber: `INV-CHAIN-PREV-${Date.now()}-${randomUUID().slice(0, 6)}`,
+    lines: baseLines(chainPreviousOrder.id),
+  });
+  reportedRows.push(chainPrevious);
+
+  const chainFailedOrder = await createDemoOrder(
+    container,
+    "ZATCA chain continuity forced failure",
+  );
+  const failedLines = baseLines(chainFailedOrder.id);
+  const failedTotals = totalsForLines(failedLines);
+  const failedParts = issueParts();
+  const { result: failedResult } = await reportInvoiceWorkflow(container).run({
+    input: {
+      orderId: chainFailedOrder.id,
+      serialNumber: `INV-CHAIN-FAIL-${Date.now()}-${randomUUID().slice(0, 6)}`,
+      issueDate: failedParts.issueDate,
+      issueTime: failedParts.issueTime,
+      lines: failedLines,
+      expectedTaxInclusiveHalalas: failedTotals.expectedTaxInclusiveHalalas + 1,
+      expectedTaxHalalas: failedTotals.expectedTaxHalalas,
+    },
+  });
+  const forcedFailure = await service.retrieveZatcaInvoice(
+    failedResult.id,
+  ) as ZatcaInvoiceRow;
+  assertLocalFailureUnchained(forcedFailure);
+
+  const chainNextOrder = await createDemoOrder(container, "ZATCA chain continuity next");
+  const chainNext = await issueOriginalInvoice({
+    container,
+    service,
+    order: chainNextOrder,
+    serialNumber: `INV-CHAIN-NEXT-${Date.now()}-${randomUUID().slice(0, 6)}`,
+    lines: baseLines(chainNextOrder.id),
+  });
+  if (chainNext.icv !== chainPrevious.icv + 1) {
+    throw new Error(
+      `chain next ICV ${chainNext.icv}; expected ${chainPrevious.icv + 1}`,
+    );
+  }
+  if (chainNext.pih !== chainPrevious.invoice_hash) {
+    throw new Error("chain next PIH does not match previous submitted hash");
+  }
+  await assertForcedFailureChainProof(service, {
+    failed: forcedFailure,
+    previous: chainPrevious,
+    next: chainNext,
+  });
+  reportedRows.push(chainNext);
 
   const createInvoice = async (label: string, linesForOrder: LifecycleLine[]) => {
     const order = await createDemoOrder(container, label);
@@ -666,7 +783,7 @@ export default async function e2eZatcaLifecycle({ container }: ExecArgs) {
     { id: editDownId, order_id: editDown.order.id, actions: [{ type: "item_update" }] },
     {
       queryGraph: async (input) =>
-        input.entity === "order"
+        input.entity === ZATCA_QUERY_ENTITY.ORDER
           ? { data: [orderGraph(editDown.order.id, 1000)] }
           : query.graph(input),
       service,
@@ -701,7 +818,7 @@ export default async function e2eZatcaLifecycle({ container }: ExecArgs) {
     { id: editUpId, order_id: editUp.order.id, actions: [{ type: "item_update" }] },
     {
       queryGraph: async (input) =>
-        input.entity === "order"
+        input.entity === ZATCA_QUERY_ENTITY.ORDER
           ? { data: [orderGraph(editUp.order.id, 2000)] }
           : query.graph(input),
       service,

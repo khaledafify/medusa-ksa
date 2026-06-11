@@ -5,8 +5,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   ZATCA_ALLOWANCE_CHARGE_REASON,
+  ZATCA_COMPLIANCE_SAMPLE_TYPE,
   ZATCA_CURRENCY,
+  ZATCA_DOCUMENT_TYPE,
   ZATCA_ERROR_CODE,
+  ZATCA_INVOICE_STATUS,
+  ZATCA_INVOICE_TYPE_CODE,
+  ZATCA_LIFECYCLE_SOURCE_TYPE,
   ZATCA_MEDUSA_EVENT,
   ZATCA_NOTE_REASON,
   ZATCA_QUERY_ENTITY,
@@ -20,8 +25,13 @@ const MIGRATIONS_DIR = "modules/zatca/migrations/";
 
 const guardedLiterals = [
   ...Object.values(ZATCA_ALLOWANCE_CHARGE_REASON),
+  ...Object.values(ZATCA_COMPLIANCE_SAMPLE_TYPE),
   ...Object.values(ZATCA_CURRENCY),
+  ...Object.values(ZATCA_DOCUMENT_TYPE),
   ...Object.values(ZATCA_ERROR_CODE),
+  ...Object.values(ZATCA_INVOICE_STATUS),
+  ...Object.values(ZATCA_INVOICE_TYPE_CODE),
+  ...Object.values(ZATCA_LIFECYCLE_SOURCE_TYPE),
   ...Object.values(ZATCA_MEDUSA_EVENT),
   ...Object.values(ZATCA_NOTE_REASON),
   ...Object.values(ZATCA_QUERY_ENTITY),

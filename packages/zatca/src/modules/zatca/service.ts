@@ -292,7 +292,7 @@ class ZatcaModuleService extends MedusaService({
    * Generate, sign, QR-stamp, and persist the original invoice for an order
    * (S5, ADR-0004): the advisory lock + allocation + persist all run inside
    * one DB transaction; ZATCA submission stays outside. Idempotent on the
-   * `("order", orderId)` source key.
+   * the order lifecycle source key.
    */
   async generateInvoiceForOrder(
     input: GenerateLifecycleDocumentInput,
@@ -323,6 +323,17 @@ class ZatcaModuleService extends MedusaService({
     const invoice = await this.retrieveZatcaInvoice(invoiceId);
     if (invoice.status === ZATCA_INVOICE_STATUS.REPORTED) {
       return { id: invoice.id, status: ZATCA_INVOICE_STATUS.REPORTED };
+    }
+    if (
+      invoice.icv === null ||
+      !invoice.pih ||
+      !invoice.invoice_hash ||
+      !invoice.xml
+    ) {
+      throw new KsaError(
+        "ZATCA invoice has no chain fields or signed XML and cannot be reported.",
+        { prefix: "zatca", code: KsaErrorCodes.INVALID_INPUT },
+      );
     }
 
     const { row, csid } = await this.decryptProductionCredentials();

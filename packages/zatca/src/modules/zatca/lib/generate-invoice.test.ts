@@ -21,6 +21,7 @@ import {
 } from "./generate-invoice";
 import { type ChainHead, SEED_PIH, type SqlExecutor } from "./hash-chain";
 import { computeInvoiceHash } from "./invoice-hash";
+import { ZATCA_INVOICE_STATUS } from "./lifecycle";
 
 const FIXTURES = join(__dirname, "../../../../test/fixtures/sdk");
 const goldenXml = readFileSync(join(FIXTURES, "simplified-invoice.xml"), "utf8");
@@ -86,6 +87,26 @@ function fakeExecutor(head: ChainHead | null): SqlExecutor {
 
 const noopPersist = () => Promise.resolve();
 
+type ChainedGeneratedRecord = PendingZatcaInvoiceRecord & {
+  status: typeof ZATCA_INVOICE_STATUS.PENDING;
+  icv: number;
+  pih: string;
+  invoice_hash: string;
+  xml: string;
+  qr_code: string;
+};
+
+function expectChained(
+  record: PendingZatcaInvoiceRecord,
+): asserts record is ChainedGeneratedRecord {
+  expect(record.status).toBe(ZATCA_INVOICE_STATUS.PENDING);
+  expect(record.icv).not.toBeNull();
+  expect(record.pih).not.toBeNull();
+  expect(record.invoice_hash).not.toBeNull();
+  expect(record.xml).not.toBeNull();
+  expect(record.qr_code).not.toBeNull();
+}
+
 describe("generatePendingInvoice (end-to-end golden gate)", () => {
   it("full pipeline byte-matches the golden signed sample modulo the fresh ECDSA value", async () => {
     // Head at ICV 9 whose hash is the golden PIH → next allocation is the
@@ -97,6 +118,7 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
       persisted.push(r);
       return Promise.resolve();
     });
+    expectChained(record);
 
     expect(record.icv).toBe(10);
     expect(record.pih).toBe(SEED_PIH);
@@ -112,7 +134,7 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
     expect(record.qr_code).not.toBeNull();
     const normalized = record.xml
       .replace(freshSignature, GOLDEN_SIGNATURE)
-      .replace(record.qr_code!, goldenQr);
+      .replace(record.qr_code, goldenQr);
     const normalizedGolden = goldenXml
       .replaceAll(
         "<cbc:ChargeIndicator>true</cbc:ChargeIndicator>",
@@ -143,6 +165,7 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
       goldenInput,
       noopPersist,
     );
+    expectChained(record);
     expect(record.icv).toBe(1);
     expect(record.pih).toBe(SEED_PIH);
     expect(record.invoice_hash).toBe(computeInvoiceHash(record.xml));
@@ -155,6 +178,7 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
       withoutUuid,
       noopPersist,
     );
+    expectChained(record);
     expect(record.uuid).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     );
@@ -172,7 +196,7 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
     expect(persisted).toHaveLength(0);
   });
 
-  it("persists a failed, unreported row when reconciliation fails", async () => {
+  it("persists a failed, unreported row outside the chain when reconciliation fails", async () => {
     const persisted: PendingZatcaInvoiceRecord[] = [];
     const record = await generatePendingInvoice(
       fakeExecutor(null),
@@ -188,11 +212,11 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
     );
 
     expect(record.status).toBe("failed");
-    expect(record.icv).toBe(1);
-    expect(record.pih).toBe(SEED_PIH);
+    expect(record.icv).toBeNull();
+    expect(record.pih).toBeNull();
     expect(record.qr_code).toBeNull();
-    expect(record.xml).not.toContain("<ds:SignatureValue>");
-    expect(record.invoice_hash).toBe(computeInvoiceHash(record.xml));
+    expect(record.xml).toBeNull();
+    expect(record.invoice_hash).toBeNull();
     expect(record.zatca_response).toEqual({
       error: "reconciliation_mismatch",
       built: { taxInclusiveHalalas: 23115, taxHalalas: 3015 },
@@ -228,6 +252,7 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
       },
       noopPersist,
     );
+    expectChained(record);
 
     expect(record).toMatchObject({
       order_id: "order_golden",
@@ -281,6 +306,7 @@ describe("secret hygiene (PRD §6 credential-security gate)", () => {
       goldenInput,
       noopPersist,
     );
+    expectChained(record);
     expect(record.xml).not.toContain(keyBody);
     expect(record.qr_code).not.toContain(keyBody);
     expect(JSON.stringify(record)).not.toContain(keyBody);
@@ -345,10 +371,10 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
          reason text,
          lines_snapshot jsonb,
          uuid text not null unique,
-         icv integer not null unique,
-         pih text not null,
-         invoice_hash text not null,
-         xml text not null,
+         icv integer unique,
+         pih text,
+         invoice_hash text,
+         xml text,
          qr_code text,
          status text not null,
          unique (source_type, source_id)
@@ -382,7 +408,7 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
                 uuid, icv, pih, invoice_hash, xml, qr_code, status)
              values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
             [
-              `zatinv_${r.icv}`,
+              `zatinv_${r.icv ?? r.source_id}`,
               r.order_id,
               r.document_type,
               r.invoice_type,
@@ -564,5 +590,64 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
     for (let i = 1; i < rows.length; i++) {
       expect(rows[i]!.pih).toBe(rows[i - 1]!.invoice_hash);
     }
+  }, 30_000);
+
+  it("keeps local reconciliation failures out of the ICV/PIH chain", async () => {
+    const previous = await generateDocument({
+      ...goldenInput,
+      uuid: "55555555-5555-4555-8555-555555555555",
+      orderId: "order_chain_previous",
+      serialNumber: "INV-CHAIN-PREV",
+    });
+    expectChained(previous);
+
+    const failed = await generateDocument({
+      ...goldenInput,
+      uuid: "66666666-6666-4666-8666-666666666666",
+      orderId: "order_chain_failed",
+      serialNumber: "INV-CHAIN-FAILED",
+      expectedTaxInclusiveHalalas: 99999,
+      expectedTaxHalalas: 3015,
+    });
+
+    expect(failed).toMatchObject({
+      status: "failed",
+      icv: null,
+      pih: null,
+      invoice_hash: null,
+      xml: null,
+      qr_code: null,
+    });
+
+    const next = await generateDocument({
+      ...goldenInput,
+      uuid: "77777777-7777-4777-8777-777777777777",
+      orderId: "order_chain_next",
+      serialNumber: "INV-CHAIN-NEXT",
+    });
+    expectChained(next);
+
+    expect(next.icv).toBe(previous.icv + 1);
+    expect(next.pih).toBe(previous.invoice_hash);
+
+    const { rows } = await pool.query<{
+      max_icv: number;
+      failed_chain_fields: string;
+      next_pih: string;
+    }>(
+      `select
+          (select max(icv) from ${schema}.zatca_invoice) as max_icv,
+          concat_ws(':', f.icv, f.pih, f.invoice_hash) as failed_chain_fields,
+          n.pih as next_pih
+         from ${schema}.zatca_invoice f
+         cross join ${schema}.zatca_invoice n
+        where f.source_id = 'order_chain_failed'
+          and n.source_id = 'order_chain_next'`,
+    );
+    expect(rows[0]).toEqual({
+      max_icv: 2,
+      failed_chain_fields: "",
+      next_pih: previous.invoice_hash,
+    });
   }, 30_000);
 });
