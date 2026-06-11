@@ -9,6 +9,13 @@ import {
 import { generateQr } from "./qr";
 import { signInvoice } from "./signer";
 import {
+  ZATCA_DOCUMENT_TYPE,
+  ZATCA_LIFECYCLE_SOURCE_TYPE,
+  ZATCA_INVOICE_STATUS,
+  type ZatcaDocumentType,
+  type ZatcaLifecycleSourceType,
+} from "./lifecycle";
+import {
   buildSimplifiedInvoiceXml,
   formatHalalas,
   type SimplifiedInvoiceProps,
@@ -22,18 +29,12 @@ import { assertSimplifiedInvoiceReconciles } from "./tax-base";
  * stays outside the lock — the deferred engine picks pending invoices up.
  */
 
-export type ZatcaDocumentType = "invoice" | "credit_note" | "debit_note";
-export type ZatcaLifecycleSourceType =
-  | "order"
-  | "refund"
-  | "return"
-  | "order_cancel"
-  | "order_edit";
+export type { ZatcaDocumentType, ZatcaLifecycleSourceType };
 
 const INVOICE_TYPE_CODE_BY_DOCUMENT_TYPE: Record<ZatcaDocumentType, string> = {
-  invoice: "388",
-  credit_note: "381",
-  debit_note: "383",
+  [ZATCA_DOCUMENT_TYPE.INVOICE]: "388",
+  [ZATCA_DOCUMENT_TYPE.CREDIT_NOTE]: "381",
+  [ZATCA_DOCUMENT_TYPE.DEBIT_NOTE]: "383",
 };
 
 /** Builder input minus the chain-allocated fields; UUID minted if absent. */
@@ -88,7 +89,7 @@ export interface PendingZatcaInvoiceRecord {
   xml: string;
   /** TLV 9-tag QR, base64. */
   qr_code: string;
-  status: "pending";
+  status: typeof ZATCA_INVOICE_STATUS.PENDING;
 }
 
 function defaultLinesSnapshot(
@@ -132,7 +133,7 @@ function assertLifecycleFields(
     );
   }
 
-  if (documentType === "invoice") {
+  if (documentType === ZATCA_DOCUMENT_TYPE.INVOICE) {
     return;
   }
 
@@ -169,8 +170,8 @@ export async function generatePendingInvoice(
     signingTime,
     expectedTaxInclusiveHalalas,
     expectedTaxHalalas,
-    documentType = "invoice",
-    sourceType = "order",
+    documentType = ZATCA_DOCUMENT_TYPE.INVOICE,
+    sourceType = ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER,
     sourceId,
     parentInvoiceId,
     reason,
@@ -261,7 +262,7 @@ export async function generatePendingInvoice(
     invoice_hash: invoiceHash,
     xml: signedXml.replace("SET_QR_CODE_DATA", qrCode),
     qr_code: qrCode,
-    status: "pending",
+    status: ZATCA_INVOICE_STATUS.PENDING,
   };
 
   await persist(record);

@@ -1,6 +1,7 @@
 import type { MedusaContainer } from "@medusajs/framework/types";
-import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils";
+import { ContainerRegistrationKeys } from "@medusajs/framework/utils";
 
+import { notifyZatcaRemediation } from "../lib/zatca-remediation-notification";
 import { ZATCA_MODULE } from "../modules/zatca";
 import type ZatcaModuleService from "../modules/zatca/service";
 
@@ -30,26 +31,8 @@ export default async function retryZatcaReporting(
     );
   }
 
-  for (const invoiceId of result.failed) {
-    logger.error(
-      `[zatca] invoice ${invoiceId} outlived the 24h reporting window — ` +
-        `marked failed. Issue a credit note and regenerate; the ICV is consumed.`,
-    );
-    try {
-      const notification = container.resolve(Modules.NOTIFICATION);
-      await notification.createNotifications({
-        to: "",
-        channel: "feed",
-        template: "admin-ui",
-        data: {
-          title: "ZATCA reporting failed",
-          description: `Invoice ${invoiceId} could not be reported within the 24h window and was marked failed.`,
-        },
-      });
-    } catch {
-      // No feed notification provider installed — the error log above is the
-      // loud fallback.
-    }
+  for (const invoiceId of [...result.rejected, ...result.failed]) {
+    await notifyZatcaRemediation(container, invoiceId);
   }
 }
 

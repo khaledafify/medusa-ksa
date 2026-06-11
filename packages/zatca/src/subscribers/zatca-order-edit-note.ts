@@ -5,6 +5,11 @@ import { ContainerRegistrationKeys } from "@medusajs/framework/utils";
 
 import { ensureZatcaInvoiceOrderLink } from "../lib/zatca-order-link";
 import { ZATCA_MODULE } from "../modules/zatca";
+import {
+  ZATCA_DOCUMENT_TYPE,
+  ZATCA_INVOICE_STATUS,
+  ZATCA_LIFECYCLE_SOURCE_TYPE,
+} from "../modules/zatca/lib/lifecycle";
 import { buildOrderEditLifecycleTaxBase } from "../modules/zatca/lib/order-edit-note";
 import { extractInvoiceSerial } from "../modules/zatca/lib/refund-credit-note";
 import {
@@ -52,7 +57,10 @@ export interface OrderEditNoteDeps {
   };
   runReportWorkflow(input: ReportInvoiceWorkflowInput): Promise<{
     id: string;
-    status: "reported" | "rejected" | "pending";
+    status:
+      | typeof ZATCA_INVOICE_STATUS.REPORTED
+      | typeof ZATCA_INVOICE_STATUS.REJECTED
+      | typeof ZATCA_INVOICE_STATUS.PENDING;
   }>;
   linkDocument(orderId: string, invoiceId: string): Promise<void>;
   logger: { info(message: string): void; warn(message: string): void };
@@ -107,7 +115,7 @@ async function originalInvoiceForOrder(
   orderId: string,
 ): Promise<OriginalInvoiceForOrderEdit | null> {
   const [original] = await service.listZatcaInvoices(
-    { source_type: "order", source_id: orderId },
+    { source_type: ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER, source_id: orderId },
     { take: 1 },
   );
   return (original as OriginalInvoiceForOrderEdit | undefined) ?? null;
@@ -119,7 +127,7 @@ export async function issueOrderEditNote(
 ): Promise<void> {
   const sourceId = sourceIdForEdit(eventData);
   const [existing] = await deps.service.listZatcaInvoices(
-    { source_type: "order_edit", source_id: sourceId },
+    { source_type: ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER_EDIT, source_id: sourceId },
     { take: 1 },
   );
   if (existing) return;
@@ -128,7 +136,7 @@ export async function issueOrderEditNote(
     deps.service,
     eventData.order_id,
   );
-  if (originalInvoice?.status !== "reported") {
+  if (originalInvoice?.status !== ZATCA_INVOICE_STATUS.REPORTED) {
     deps.logger.warn(
       `[zatca] order edit ${sourceId} has no reported original invoice — skipped`,
     );
@@ -164,11 +172,13 @@ export async function issueOrderEditNote(
 
   const { issueDate, issueTime } = formatIssueParts(deps.now());
   const serialPrefix =
-    lifecycleTaxBase.documentType === "debit_note" ? "DN" : "CN";
+    lifecycleTaxBase.documentType === ZATCA_DOCUMENT_TYPE.DEBIT_NOTE
+      ? "DN"
+      : "CN";
   const input: ReportInvoiceWorkflowInput = {
     orderId: eventData.order_id,
     documentType: lifecycleTaxBase.documentType,
-    sourceType: "order_edit",
+    sourceType: ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER_EDIT,
     sourceId,
     parentInvoiceId: originalInvoice.id,
     billingReference: extractInvoiceSerial(originalInvoice.xml),

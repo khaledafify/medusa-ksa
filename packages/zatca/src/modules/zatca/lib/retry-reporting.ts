@@ -1,4 +1,9 @@
 import type { SqlExecutor } from "./hash-chain";
+import {
+  ZATCA_INVOICE_STATUS,
+  type ZatcaDocumentType,
+} from "./lifecycle";
+import { zatcaResponseWithRemediation } from "./remediation";
 
 /**
  * Deferred reporting engine (S6, PRD §1.5).
@@ -24,6 +29,12 @@ export const MAX_BACKOFF_MS = 4 * 60 * 60 * 1000;
 /** The slice of a `zatca_invoice` row the engine claims. */
 export interface ClaimedInvoice {
   id: string;
+  order_id: string;
+  source_type: string;
+  source_id: string;
+  document_type: ZatcaDocumentType;
+  parent_invoice_id: string | null;
+  icv: number;
   attempts: number;
   created_at: Date;
   submitted_at: Date | null;
@@ -34,7 +45,7 @@ export interface ClaimedInvoice {
 
 /** Outcome of one ZATCA Reporting call (definitive — no retry). */
 export interface ReportOutcome {
-  status: "reported" | "rejected";
+  status: typeof ZATCA_INVOICE_STATUS.REPORTED | typeof ZATCA_INVOICE_STATUS.REJECTED;
   response: unknown;
 }
 
@@ -107,9 +118,10 @@ export async function processPendingReports(
   const limit = options.limit ?? 50;
 
   const rows = (await ex.execute(
-    `select id, attempts, created_at, submitted_at, uuid, invoice_hash, xml
+    `select id, order_id, source_type, source_id, document_type, parent_invoice_id,
+            icv, attempts, created_at, submitted_at, uuid, invoice_hash, xml
        from zatca_invoice
-      where status = 'pending' and deleted_at is null
+      where status = '${ZATCA_INVOICE_STATUS.PENDING}' and deleted_at is null
       order by created_at
       limit ${Math.trunc(limit)}
         for update skip locked`,
@@ -127,7 +139,9 @@ export async function processPendingReports(
     if (isExpired(invoice, now)) {
       await ex.execute(
         `update zatca_invoice
-            set status = 'failed', updated_at = now()
+            set status = '${ZATCA_INVOICE_STATUS.FAILED}',
+                zatca_response = ${jsonLit(zatcaResponseWithRemediation(invoice, ZATCA_INVOICE_STATUS.FAILED, { error: "reporting_window_expired" }))},
+                updated_at = now()
           where id = ${lit(invoice.id)}`,
       );
       result.failed.push(invoice.id);
@@ -143,9 +157,13 @@ export async function processPendingReports(
       await ex.execute(
         `update zatca_invoice
             set status = ${lit(outcome.status)},
-                zatca_response = ${jsonLit(outcome.response)},
+                zatca_response = ${jsonLit(
+                  outcome.status === ZATCA_INVOICE_STATUS.REJECTED
+                    ? zatcaResponseWithRemediation(invoice, ZATCA_INVOICE_STATUS.REJECTED, outcome.response)
+                    : outcome.response,
+                )},
                 submitted_at = ${tsLit(now)},
-                reported_at = ${outcome.status === "reported" ? tsLit(now) : "null"},
+                reported_at = ${outcome.status === ZATCA_INVOICE_STATUS.REPORTED ? tsLit(now) : "null"},
                 attempts = ${invoice.attempts + 1},
                 updated_at = now()
           where id = ${lit(invoice.id)}`,

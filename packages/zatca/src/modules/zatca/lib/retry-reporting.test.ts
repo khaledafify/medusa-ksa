@@ -30,6 +30,12 @@ const NOW = new Date("2026-06-11T12:00:00Z");
 function candidate(over: Partial<ClaimedInvoice> = {}): ClaimedInvoice {
   return {
     id: "zatinv_1",
+    order_id: "order_zatinv_1",
+    source_type: "order",
+    source_id: "order_zatinv_1",
+    document_type: "invoice",
+    parent_invoice_id: null,
+    icv: 1,
     attempts: 0,
     created_at: NOW,
     submitted_at: null,
@@ -112,10 +118,17 @@ describe.runIf(databaseUrl)("processPendingReports (postgres)", () => {
   ): Promise<void> {
     await pool.query(
       `insert into ${schema}.zatca_invoice
-         (id, status, attempts, created_at, submitted_at, uuid, invoice_hash, xml)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         (id, order_id, source_type, source_id, document_type, parent_invoice_id,
+          icv, status, attempts, created_at, submitted_at, uuid, invoice_hash, xml)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [
         id,
+        `order_${id}`,
+        "order",
+        `order_${id}`,
+        "invoice",
+        null,
+        Number(/\d+$/.exec(id)?.[0] ?? 1),
         over.status ?? "pending",
         over.attempts ?? 0,
         over.created_at ?? NOW,
@@ -147,6 +160,12 @@ describe.runIf(databaseUrl)("processPendingReports (postgres)", () => {
     await pool.query(`
       create table ${schema}.zatca_invoice (
         id text primary key,
+        order_id text not null,
+        source_type text not null,
+        source_id text not null,
+        document_type text not null,
+        parent_invoice_id text,
+        icv integer not null,
         status text not null default 'pending',
         attempts integer not null default 0,
         created_at timestamptz not null default now(),
@@ -194,7 +213,16 @@ describe.runIf(databaseUrl)("processPendingReports (postgres)", () => {
       }),
     );
     expect(result.rejected).toContain("inv_rej");
-    expect((await rowOf("inv_rej")).status).toBe("rejected");
+    const row = await rowOf("inv_rej");
+    expect(row.status).toBe("rejected");
+    expect(row.zatca_response).toEqual({
+      error: "bad",
+      remediation: expect.objectContaining({
+        action: "review_zatca_rejection",
+        order_id: "order_inv_rej",
+        icv_consumed: true,
+      }),
+    });
   });
 
   it("keeps a transient failure pending with the attempt counted", async () => {
@@ -251,7 +279,16 @@ describe.runIf(databaseUrl)("processPendingReports (postgres)", () => {
     );
     expect(result.failed).toContain("inv_expired");
     expect(calls).toBe(0);
-    expect((await rowOf("inv_expired")).status).toBe("failed");
+    const row = await rowOf("inv_expired");
+    expect(row.status).toBe("failed");
+    expect(row.zatca_response).toEqual({
+      error: "reporting_window_expired",
+      remediation: expect.objectContaining({
+        action: "retry_failed_reporting",
+        order_id: "order_inv_expired",
+        icv_consumed: true,
+      }),
+    });
   });
 
   it("never touches reported/rejected/failed invoices", async () => {

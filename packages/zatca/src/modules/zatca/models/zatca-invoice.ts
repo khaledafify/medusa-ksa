@@ -1,5 +1,14 @@
 import { model } from "@medusajs/framework/utils";
 
+import {
+  ZATCA_DOCUMENT_TYPE,
+  ZATCA_DOCUMENT_TYPES,
+  ZATCA_INVOICE_STATUS,
+  ZATCA_INVOICE_STATUSES,
+  ZATCA_LIFECYCLE_SOURCE_TYPE,
+  ZATCA_LIFECYCLE_SOURCE_TYPES,
+} from "../lib/lifecycle";
+
 /**
  * ZATCA documents for a Medusa order, associated via a Module Link
  * (src/links/zatca-invoice-order.ts) — never a foreign key (ADR-0001).
@@ -18,12 +27,12 @@ const ZatcaInvoice = model
     invoice_type: model.enum(["simplified"]).default("simplified"),
     /** Document kind; all use the UBL Invoice root. */
     document_type: model
-      .enum(["invoice", "credit_note", "debit_note"])
-      .default("invoice"),
+      .enum([...ZATCA_DOCUMENT_TYPES])
+      .default(ZATCA_DOCUMENT_TYPE.INVOICE),
     /** Lifecycle source that triggered this document. */
     source_type: model
-      .enum(["order", "refund", "return", "order_cancel", "order_edit"])
-      .default("order"),
+      .enum([...ZATCA_LIFECYCLE_SOURCE_TYPES])
+      .default(ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER),
     /** Triggering entity id: order id, refund id, return id, or edit id. */
     source_id: model.text(),
     /** Original invoice row for credit/debit notes. */
@@ -47,8 +56,8 @@ const ZatcaInvoice = model
     /** TLV 9-tag Base64 QR. Stamped during generation (S3). */
     qr_code: model.text().nullable(),
     status: model
-      .enum(["pending", "reported", "rejected", "failed"])
-      .default("pending"),
+      .enum([...ZATCA_INVOICE_STATUSES])
+      .default(ZATCA_INVOICE_STATUS.PENDING),
     /** Raw ZATCA Reporting response: status, warnings, errors. */
     zatca_response: model.json().nullable(),
     submitted_at: model.dateTime().nullable(),

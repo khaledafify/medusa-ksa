@@ -64,6 +64,7 @@ describe.runIf(databaseUrl)("hash chain under concurrency (advisory lock)", () =
       `create table ${schema}.zatca_invoice (
          id text primary key,
          icv integer not null unique,
+         status text not null default 'pending',
          pih text not null,
          invoice_hash text not null
        )`,
@@ -122,4 +123,22 @@ describe.runIf(databaseUrl)("hash chain under concurrency (advisory lock)", () =
       expect(rows[i].pih).toBe(rows[i - 1].invoice_hash);
     }
   }, 30_000);
+
+  it("uses a rejected document as the next PIH source", async () => {
+    await pool.query(`truncate table ${schema}.zatca_invoice`);
+    await pool.query(
+      `insert into ${schema}.zatca_invoice (id, icv, status, pih, invoice_hash)
+       values ($1, $2, $3, $4, $5)`,
+      ["inv_rejected", 1, "rejected", SEED_PIH, "rejected-hash"],
+    );
+
+    const client = await pool.connect();
+    try {
+      await client.query(`set search_path to ${schema}`);
+      const head = await readChainHead(executor(client));
+      expect(nextAllocation(head)).toEqual({ icv: 2, pih: "rejected-hash" });
+    } finally {
+      client.release();
+    }
+  });
 });

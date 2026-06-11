@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type ZatcaModuleService from "../../../modules/zatca/service";
+import type { ZatcaInvoiceSummary } from "../../../modules/zatca/service";
+import { POST as postCorrectiveCreditNote } from "./invoices/[id]/corrective-credit-note/route";
 import { GET as getSummary } from "./invoices/route";
 import { POST as postRetry } from "./invoices/retry/route";
 import { onboardBodySchema } from "./onboard/route";
@@ -15,6 +17,7 @@ import { GET as getStatus } from "./status/route";
 function fakeReqRes(service: Partial<InstanceType<typeof ZatcaModuleService>>) {
   let payload: unknown;
   const req = {
+    params: {},
     scope: { resolve: () => service },
   } as unknown as Parameters<typeof getStatus>[0];
   const res = {
@@ -50,8 +53,32 @@ describe("GET /admin/zatca/status", () => {
 });
 
 describe("GET /admin/zatca/invoices", () => {
-  it("returns counts only — no row data, XML, or QR", async () => {
-    const summary = { pending: 1, reported: 5, rejected: 0, failed: 2, total: 8 };
+  it("returns counts plus safe remediation notices — no XML, QR, or credentials", async () => {
+    const summary: ZatcaInvoiceSummary = {
+      pending: 1,
+      reported: 5,
+      rejected: 1,
+      failed: 2,
+      total: 9,
+      documents: { invoice: 6, credit_note: 2, debit_note: 1 },
+      needs_attention: 3,
+      remediation: [
+        {
+          invoice_id: "zatinv_rej",
+          order_id: "order_123",
+          source_type: "refund",
+          source_id: "refund_123",
+          document_type: "credit_note",
+          status: "rejected",
+          action: "issue_corrective_credit_note",
+          action_label: "Issue corrective credit note",
+          message:
+            "Order order_123: review the rejection and issue a corrective credit note.",
+          icv_consumed: true,
+          mutates_order: false,
+        },
+      ],
+    };
     const { req, res, payload } = fakeReqRes({
       getZatcaInvoiceSummary: () => Promise.resolve(summary),
     });
@@ -59,9 +86,9 @@ describe("GET /admin/zatca/invoices", () => {
     await getSummary(req, res);
 
     expect(payload()).toEqual(summary);
-    for (const value of Object.values(payload() as Record<string, unknown>)) {
-      expect(typeof value).toBe("number");
-    }
+    expect(JSON.stringify(payload())).not.toMatch(
+      /<Invoice|qr_code|xml|certificate|private|secret|csid/i,
+    );
   });
 });
 
@@ -75,6 +102,36 @@ describe("POST /admin/zatca/invoices/retry", () => {
     await postRetry(req, res);
 
     expect(payload()).toEqual(outcome);
+  });
+});
+
+describe("POST /admin/zatca/invoices/:id/corrective-credit-note", () => {
+  it("returns the non-mutating corrective action for the admin dashboard", async () => {
+    const action = {
+      invoice_id: "zatinv_rej",
+      order_id: "order_123",
+      source_type: "refund",
+      source_id: "refund_123",
+      document_type: "credit_note" as const,
+      status: "rejected" as const,
+      action: "issue_corrective_credit_note" as const,
+      action_label: "Issue corrective credit note",
+      message:
+        "Order order_123: issue a corrective credit note for the rejected document.",
+      icv_consumed: true as const,
+      mutates_order: false as const,
+    };
+    const { req, res, payload } = fakeReqRes({
+      getCorrectiveCreditNoteAction: () => Promise.resolve(action),
+    });
+    (req as unknown as { params: { id: string } }).params = { id: "zatinv_rej" };
+
+    await postCorrectiveCreditNote(req, res);
+
+    expect(payload()).toEqual(action);
+    expect(JSON.stringify(payload())).not.toMatch(
+      /<Invoice|qr_code|xml|certificate|private|secret|csid/i,
+    );
   });
 });
 

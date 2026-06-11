@@ -31,12 +31,66 @@ interface ZatcaStatus {
   egs_serial_number?: string;
 }
 
+const REMEDIATION_ACTION = {
+  ISSUE_CORRECTIVE_CREDIT_NOTE: "issue_corrective_credit_note",
+  RETRY_FAILED_REPORTING: "retry_failed_reporting",
+  REVIEW_ZATCA_REJECTION: "review_zatca_rejection",
+} as const;
+
+const REMEDIATION_DOCUMENT_TYPE = {
+  INVOICE: "invoice",
+  CREDIT_NOTE: "credit_note",
+  DEBIT_NOTE: "debit_note",
+} as const;
+
+const TERMINAL_STATUS = {
+  REJECTED: "rejected",
+  FAILED: "failed",
+} as const;
+
+type RemediationDocumentType =
+  (typeof REMEDIATION_DOCUMENT_TYPE)[keyof typeof REMEDIATION_DOCUMENT_TYPE];
+
+type TerminalStatus = (typeof TERMINAL_STATUS)[keyof typeof TERMINAL_STATUS];
+
+const REMEDIATION_DOCUMENT_TYPE_LABEL: Record<RemediationDocumentType, string> = {
+  [REMEDIATION_DOCUMENT_TYPE.INVOICE]: "invoice",
+  [REMEDIATION_DOCUMENT_TYPE.CREDIT_NOTE]: "credit note",
+  [REMEDIATION_DOCUMENT_TYPE.DEBIT_NOTE]: "debit note",
+};
+
+const TERMINAL_STATUS_LABEL: Record<TerminalStatus, string> = {
+  [TERMINAL_STATUS.REJECTED]: "rejected",
+  [TERMINAL_STATUS.FAILED]: "failed",
+};
+
 interface ZatcaSummary {
   pending: number;
   reported: number;
   rejected: number;
   failed: number;
   total: number;
+  documents: {
+    invoice: number;
+    credit_note: number;
+    debit_note: number;
+  };
+  needs_attention: number;
+  remediation: ZatcaRemediation[];
+}
+
+interface ZatcaRemediation {
+  invoice_id: string;
+  order_id: string;
+  source_type: string;
+  source_id: string;
+  document_type: RemediationDocumentType;
+  status: TerminalStatus;
+  action:
+    (typeof REMEDIATION_ACTION)[keyof typeof REMEDIATION_ACTION];
+  action_label: string;
+  message: string;
+  mutates_order: false;
 }
 
 interface RetryResult {
@@ -173,6 +227,21 @@ const ZatcaSettingsPage = (): React.JSX.Element => {
     },
   });
 
+  const correctiveCreditNote = useMutation({
+    mutationFn: (invoiceId: string) =>
+      sdk.client.fetch<ZatcaRemediation>(
+        `/admin/zatca/invoices/${invoiceId}/corrective-credit-note`,
+        { method: "POST" },
+      ),
+    onSuccess: (result) => {
+      toast.success(result.message);
+      void queryClient.invalidateQueries({ queryKey: ["zatca-invoice-summary"] });
+    },
+    onError: (error: Error) => {
+      toast.error(`Corrective action failed: ${error.message}`);
+    },
+  });
+
   const badge = status ? STATUS_BADGE[status.status] : undefined;
   const formComplete = (Object.values(form) as string[]).every(
     (value) => value.trim().length > 0,
@@ -272,6 +341,81 @@ const ZatcaSettingsPage = (): React.JSX.Element => {
             </div>
           ))}
         </div>
+        <div className="grid grid-cols-3 gap-4 px-6 py-4">
+          {(
+            [
+              ["Invoices", summary?.documents.invoice],
+              ["Credit notes", summary?.documents.credit_note],
+              ["Debit notes", summary?.documents.debit_note],
+            ] as const
+          ).map(([label, count]) => (
+            <div key={label}>
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                {label}
+              </Text>
+              <Text size="large" leading="compact" weight="plus">
+                {count ?? "—"}
+              </Text>
+            </div>
+          ))}
+        </div>
+        {summary && summary.needs_attention > 0 && (
+          <div className="flex flex-col gap-3 border-t px-6 py-4">
+            <div className="flex items-center gap-2">
+              <StatusBadge color="red">Needs attention</StatusBadge>
+              <Text size="small" leading="compact" weight="plus">
+                {summary.needs_attention} ZATCA document
+                {summary.needs_attention === 1 ? "" : "s"} need remediation
+              </Text>
+            </div>
+            {summary.remediation.map((item) => (
+              <div
+                key={item.invoice_id}
+                className="flex flex-col gap-2 rounded-md border border-ui-border-base px-3 py-3"
+              >
+                <Text size="small" leading="compact">
+                  {item.message}
+                </Text>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge size="2xsmall">
+                    {TERMINAL_STATUS_LABEL[item.status]}
+                  </Badge>
+                  <Badge size="2xsmall">
+                    {REMEDIATION_DOCUMENT_TYPE_LABEL[item.document_type]}
+                  </Badge>
+                  <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                    Order {item.order_id}
+                  </Text>
+                  {item.action ===
+                    REMEDIATION_ACTION.ISSUE_CORRECTIVE_CREDIT_NOTE && (
+                    <Button
+                      size="small"
+                      variant="secondary"
+                      onClick={() =>
+                        correctiveCreditNote.mutate(item.invoice_id)
+                      }
+                      disabled={correctiveCreditNote.isPending}
+                      isLoading={correctiveCreditNote.isPending}
+                    >
+                      {item.action_label}
+                    </Button>
+                  )}
+                  {item.action === REMEDIATION_ACTION.RETRY_FAILED_REPORTING && (
+                    <Button
+                      size="small"
+                      variant="secondary"
+                      onClick={() => retryFailed.mutate()}
+                      disabled={retryFailed.isPending}
+                      isLoading={retryFailed.isPending}
+                    >
+                      {item.action_label}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </Container>
 
       {status && status.status !== "production" && (

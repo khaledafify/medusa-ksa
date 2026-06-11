@@ -6,8 +6,10 @@ import {
 } from "@medusajs/framework/workflows-sdk";
 
 import { ZATCA_MODULE } from "../modules/zatca";
+import { ZATCA_INVOICE_STATUS } from "../modules/zatca/lib/lifecycle";
 import type ZatcaModuleService from "../modules/zatca/service";
 import type { GenerateLifecycleDocumentInput } from "../modules/zatca/service";
+import { notifyZatcaRemediation } from "../lib/zatca-remediation-notification";
 
 /**
  * `report-invoice` workflow (S5, SPEC §4): generate + persist the signed,
@@ -34,12 +36,18 @@ const reportInvoiceStep = createStep(
     const service: ZatcaModuleService = container.resolve(ZATCA_MODULE);
     try {
       const result = await service.reportZatcaInvoice(input.invoiceId);
+      if (result.status === ZATCA_INVOICE_STATUS.REJECTED) {
+        await notifyZatcaRemediation(container, input.invoiceId);
+      }
       return new StepResponse(result);
     } catch {
       // Transient failure: the invoice stays pending; S6 retries within the
       // 24h window. The workflow itself succeeds — the order must never feel
       // a ZATCA outage.
-      return new StepResponse({ id: input.invoiceId, status: "pending" as const });
+      return new StepResponse({
+        id: input.invoiceId,
+        status: ZATCA_INVOICE_STATUS.PENDING,
+      });
     }
   },
 );

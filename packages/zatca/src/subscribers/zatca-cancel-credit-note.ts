@@ -4,6 +4,11 @@ import { ContainerRegistrationKeys } from "@medusajs/framework/utils";
 import { ensureZatcaInvoiceOrderLink } from "../lib/zatca-order-link";
 import { ZATCA_MODULE } from "../modules/zatca";
 import {
+  ZATCA_DOCUMENT_TYPE,
+  ZATCA_INVOICE_STATUS,
+  ZATCA_LIFECYCLE_SOURCE_TYPE,
+} from "../modules/zatca/lib/lifecycle";
+import {
   buildRefundCreditNoteTaxBase,
   extractInvoiceSerial,
   originalInvoiceTotals,
@@ -29,7 +34,10 @@ export interface CancellationCreditNoteDeps {
   };
   runReportWorkflow(input: ReportInvoiceWorkflowInput): Promise<{
     id: string;
-    status: "reported" | "rejected" | "pending";
+    status:
+      | typeof ZATCA_INVOICE_STATUS.REPORTED
+      | typeof ZATCA_INVOICE_STATUS.REJECTED
+      | typeof ZATCA_INVOICE_STATUS.PENDING;
   }>;
   linkDocument(orderId: string, invoiceId: string): Promise<void>;
   logger: { info(message: string): void; warn(message: string): void };
@@ -49,7 +57,7 @@ async function originalInvoiceForOrder(
   orderId: string,
 ): Promise<OriginalInvoiceForCancellation | null> {
   const [original] = await service.listZatcaInvoices(
-    { source_type: "order", source_id: orderId },
+    { source_type: ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER, source_id: orderId },
     { take: 1 },
   );
   return (original as OriginalInvoiceForCancellation | undefined) ?? null;
@@ -61,7 +69,7 @@ async function creditNotesForOrder(
 ): Promise<ExistingCreditNoteForRefund[]> {
   const rows = await service.listZatcaInvoices({
     order_id: orderId,
-    document_type: "credit_note",
+    document_type: ZATCA_DOCUMENT_TYPE.CREDIT_NOTE,
   });
   return rows as ExistingCreditNoteForRefund[];
 }
@@ -71,7 +79,7 @@ export async function issueCancellationCreditNote(
   deps: CancellationCreditNoteDeps,
 ): Promise<void> {
   const [existing] = await deps.service.listZatcaInvoices(
-    { source_type: "order_cancel", source_id: orderId },
+    { source_type: ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER_CANCEL, source_id: orderId },
     { take: 1 },
   );
   if (existing) return;
@@ -81,7 +89,7 @@ export async function issueCancellationCreditNote(
     deps.logger.warn(`[zatca] canceled order ${orderId} has no invoice — skipped`);
     return;
   }
-  if (originalInvoice.status !== "reported") {
+  if (originalInvoice.status !== ZATCA_INVOICE_STATUS.REPORTED) {
     deps.logger.warn(
       `[zatca] canceled order ${orderId} invoice is ${originalInvoice.status ?? "unknown"} — skipped`,
     );
@@ -99,8 +107,8 @@ export async function issueCancellationCreditNote(
     const { issueDate, issueTime } = formatIssueParts(deps.now());
     input = {
       orderId,
-      documentType: "credit_note",
-      sourceType: "order_cancel",
+      documentType: ZATCA_DOCUMENT_TYPE.CREDIT_NOTE,
+      sourceType: ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER_CANCEL,
       sourceId: orderId,
       parentInvoiceId: originalInvoice.id,
       billingReference: extractInvoiceSerial(originalInvoice.xml),

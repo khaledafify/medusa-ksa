@@ -11,6 +11,11 @@ import {
   type ExistingCreditNoteForRefund,
   type OriginalInvoiceForRefund,
 } from "../modules/zatca/lib/refund-credit-note";
+import {
+  ZATCA_DOCUMENT_TYPE,
+  ZATCA_LIFECYCLE_SOURCE_TYPE,
+} from "../modules/zatca/lib/lifecycle";
+import type { ZATCA_INVOICE_STATUS } from "../modules/zatca/lib/lifecycle";
 import type ZatcaModuleService from "../modules/zatca/service";
 import {
   reportInvoiceWorkflow,
@@ -37,7 +42,10 @@ export interface RefundCreditNoteDeps {
   };
   runReportWorkflow(input: ReportInvoiceWorkflowInput): Promise<{
     id: string;
-    status: "reported" | "rejected" | "pending";
+    status:
+      | typeof ZATCA_INVOICE_STATUS.REPORTED
+      | typeof ZATCA_INVOICE_STATUS.REJECTED
+      | typeof ZATCA_INVOICE_STATUS.PENDING;
   }>;
   linkDocument(orderId: string, invoiceId: string): Promise<void>;
   logger: { info(message: string): void; warn(message: string): void };
@@ -67,7 +75,7 @@ async function originalInvoiceForOrder(
   orderId: string,
 ): Promise<OriginalInvoiceForRefund | null> {
   const [original] = await service.listZatcaInvoices(
-    { source_type: "order", source_id: orderId },
+    { source_type: ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER, source_id: orderId },
     { take: 1 },
   );
   return (original as OriginalInvoiceForRefund | undefined) ?? null;
@@ -79,7 +87,7 @@ async function creditNotesForOrder(
 ): Promise<ExistingCreditNoteForRefund[]> {
   const rows = await service.listZatcaInvoices({
     order_id: orderId,
-    document_type: "credit_note",
+    document_type: ZATCA_DOCUMENT_TYPE.CREDIT_NOTE,
   });
   return rows as ExistingCreditNoteForRefund[];
 }
@@ -116,7 +124,7 @@ export async function issueRefundCreditNotesForPayment(
 
   for (const refund of payment.refunds ?? []) {
     const [existing] = await deps.service.listZatcaInvoices(
-      { source_type: "refund", source_id: refund.id },
+      { source_type: ZATCA_LIFECYCLE_SOURCE_TYPE.REFUND, source_id: refund.id },
       { take: 1 },
     );
     if (existing) continue;
@@ -131,8 +139,8 @@ export async function issueRefundCreditNotesForPayment(
       const { issueDate, issueTime } = formatIssueParts(deps.now());
       input = {
         orderId,
-        documentType: "credit_note",
-        sourceType: "refund",
+        documentType: ZATCA_DOCUMENT_TYPE.CREDIT_NOTE,
+        sourceType: ZATCA_LIFECYCLE_SOURCE_TYPE.REFUND,
         sourceId: refund.id,
         parentInvoiceId: originalInvoice.id,
         billingReference: extractInvoiceSerial(originalInvoice.xml),

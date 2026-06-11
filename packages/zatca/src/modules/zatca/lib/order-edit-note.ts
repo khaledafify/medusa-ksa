@@ -1,3 +1,4 @@
+import { ZATCA_DOCUMENT_TYPE } from "./lifecycle";
 import type { DerivedSimplifiedInvoiceTaxBase } from "./tax-base";
 import type {
   ZatcaDocumentAllowanceCharge,
@@ -10,11 +11,18 @@ interface OriginalInvoiceForEdit {
   lines_snapshot: unknown;
 }
 
-type EditDocumentType = "credit_note" | "debit_note";
+type EditDocumentType =
+  | typeof ZATCA_DOCUMENT_TYPE.CREDIT_NOTE
+  | typeof ZATCA_DOCUMENT_TYPE.DEBIT_NOTE;
+
+const ORDER_EDIT_REASON_BY_DOCUMENT_TYPE: Record<EditDocumentType, string> = {
+  [ZATCA_DOCUMENT_TYPE.CREDIT_NOTE]: "Order edit decrease",
+  [ZATCA_DOCUMENT_TYPE.DEBIT_NOTE]: "Order edit increase",
+};
 
 export interface OrderEditLifecycleTaxBase {
   documentType: EditDocumentType;
-  reason: "Order edit decrease" | "Order edit increase";
+  reason: (typeof ORDER_EDIT_REASON_BY_DOCUMENT_TYPE)[EditDocumentType];
   lines: ZatcaInvoiceLine[];
   documentAllowances: ZatcaDocumentAllowanceCharge[];
   documentCharges: ZatcaDocumentAllowanceCharge[];
@@ -163,8 +171,10 @@ export function buildOrderEditLifecycleTaxBase(input: {
     0,
   );
   const documentType: EditDocumentType =
-    totalTaxableDelta < 0 ? "credit_note" : "debit_note";
-  const sign = documentType === "credit_note" ? -1 : 1;
+    totalTaxableDelta < 0
+      ? ZATCA_DOCUMENT_TYPE.CREDIT_NOTE
+      : ZATCA_DOCUMENT_TYPE.DEBIT_NOTE;
+  const sign = documentType === ZATCA_DOCUMENT_TYPE.CREDIT_NOTE ? -1 : 1;
   if (deltas.some((delta) => Math.sign(delta.taxableDelta) !== sign)) {
     throw new Error("mixed-direction order edit deltas require manual review");
   }
@@ -174,10 +184,7 @@ export function buildOrderEditLifecycleTaxBase(input: {
     const amountHalalas = Math.abs(delta.taxableDelta);
     const taxHalalas = vatOf(amountHalalas, delta.vatPercent);
     expectedTaxHalalas += taxHalalas;
-    const reason =
-      documentType === "credit_note"
-        ? "Order edit decrease"
-        : "Order edit increase";
+    const reason = ORDER_EDIT_REASON_BY_DOCUMENT_TYPE[documentType];
     return {
       id: idx + 1,
       name: `${reason} @ ${delta.vatPercent}% VAT`,
@@ -194,10 +201,7 @@ export function buildOrderEditLifecycleTaxBase(input: {
 
   return {
     documentType,
-    reason:
-      documentType === "credit_note"
-        ? "Order edit decrease"
-        : "Order edit increase",
+    reason: ORDER_EDIT_REASON_BY_DOCUMENT_TYPE[documentType],
     lines,
     documentAllowances: [],
     documentCharges: [],

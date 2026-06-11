@@ -9,6 +9,12 @@ import {
   type ZatcaLifecycleSourceType,
 } from "./lib/generate-invoice";
 import {
+  ZATCA_DOCUMENT_TYPE,
+  ZATCA_INVOICE_STATUS,
+  ZATCA_LIFECYCLE_SOURCE_TYPE,
+  type ZatcaDocumentType,
+} from "./lib/lifecycle";
+import {
   onboardCompliance,
   type OnboardComplianceInput,
   type OnboardComplianceResult,
@@ -21,6 +27,13 @@ import {
   processPendingReports,
   type ProcessResult,
 } from "./lib/retry-reporting";
+import {
+  ZATCA_REMEDIATION_ACTION,
+  zatcaRemediationNotice,
+  zatcaResponseWithRemediation,
+  type ZatcaRemediationNotice,
+  type ZatcaTerminalDocument,
+} from "./lib/remediation";
 import ZatcaCredential from "./models/zatca-credential";
 import ZatcaInvoice from "./models/zatca-invoice";
 import { validateZatcaOptions } from "./loaders/validate-config";
@@ -52,6 +65,21 @@ export interface ZatcaOnboardingStatus {
   egs_serial_number?: string;
 }
 
+export interface ZatcaInvoiceSummary {
+  pending: number;
+  reported: number;
+  rejected: number;
+  failed: number;
+  total: number;
+  documents: {
+    invoice: number;
+    credit_note: number;
+    debit_note: number;
+  };
+  needs_attention: number;
+  remediation: ZatcaRemediationNotice[];
+}
+
 export type GenerateLifecycleDocumentInput = Omit<
   GenerateInvoiceInput,
   "egsKey" | "certificate" | "privateKey" | "supplier"
@@ -64,7 +92,7 @@ function sourceKey(input: GenerateLifecycleDocumentInput): {
   source_id: string;
 } {
   return {
-    source_type: input.sourceType ?? "order",
+    source_type: input.sourceType ?? ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER,
     source_id: input.sourceId ?? input.orderId,
   };
 }
@@ -270,8 +298,8 @@ class ZatcaModuleService extends MedusaService({
   ): Promise<PersistedPendingZatcaInvoice> {
     return this.generateLifecycleDocument({
       ...input,
-      documentType: "invoice",
-      sourceType: "order",
+      documentType: ZATCA_DOCUMENT_TYPE.INVOICE,
+      sourceType: ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER,
       sourceId: input.orderId,
       parentInvoiceId: null,
       reason: null,
@@ -286,11 +314,14 @@ class ZatcaModuleService extends MedusaService({
    */
   async reportZatcaInvoice(invoiceId: string): Promise<{
     id: string;
-    status: "reported" | "rejected" | "pending";
+    status:
+      | typeof ZATCA_INVOICE_STATUS.REPORTED
+      | typeof ZATCA_INVOICE_STATUS.REJECTED
+      | typeof ZATCA_INVOICE_STATUS.PENDING;
   }> {
     const invoice = await this.retrieveZatcaInvoice(invoiceId);
-    if (invoice.status === "reported") {
-      return { id: invoice.id, status: "reported" };
+    if (invoice.status === ZATCA_INVOICE_STATUS.REPORTED) {
+      return { id: invoice.id, status: ZATCA_INVOICE_STATUS.REPORTED };
     }
 
     const { row, csid } = await this.decryptProductionCredentials();
@@ -309,28 +340,38 @@ class ZatcaModuleService extends MedusaService({
       });
       await this.updateZatcaInvoices({
         id: invoice.id,
-        status: "reported",
+        status: ZATCA_INVOICE_STATUS.REPORTED,
         zatca_response: response as Record<string, unknown>,
         submitted_at: submittedAt,
         reported_at: new Date(),
         attempts: invoice.attempts + 1,
       });
-      return { id: invoice.id, status: "reported" };
+      return { id: invoice.id, status: ZATCA_INVOICE_STATUS.REPORTED };
     } catch (error) {
       // A 4xx from ZATCA is a definitive rejection of this document; other
       // failures (network, 5xx) stay pending for the retry engine.
       const status =
         error instanceof KsaError && /responded 4\d\d/.test(error.message)
-          ? "rejected"
-          : "pending";
+          ? ZATCA_INVOICE_STATUS.REJECTED
+          : ZATCA_INVOICE_STATUS.PENDING;
       await this.updateZatcaInvoices({
         id: invoice.id,
-        status: status === "rejected" ? "rejected" : invoice.status,
-        zatca_response: { error: String(error) },
+        status:
+          status === ZATCA_INVOICE_STATUS.REJECTED
+            ? ZATCA_INVOICE_STATUS.REJECTED
+            : invoice.status,
+        zatca_response:
+          status === ZATCA_INVOICE_STATUS.REJECTED
+            ? zatcaResponseWithRemediation(
+                invoice,
+                ZATCA_INVOICE_STATUS.REJECTED,
+                { error: String(error) },
+              )
+            : { error: String(error) },
         submitted_at: submittedAt,
         attempts: invoice.attempts + 1,
       });
-      if (status === "rejected") {
+      if (status === ZATCA_INVOICE_STATUS.REJECTED) {
         return { id: invoice.id, status };
       }
       throw error;
@@ -374,14 +415,17 @@ class ZatcaModuleService extends MedusaService({
                 invoiceHash: invoice.invoice_hash,
                 uuid: invoice.uuid,
               });
-              return { status: "reported", response };
+              return { status: ZATCA_INVOICE_STATUS.REPORTED, response };
             } catch (error) {
               // 4xx = definitive rejection; anything else stays transient.
               if (
                 error instanceof KsaError &&
                 /responded 4\d\d/.test(error.message)
               ) {
-                return { status: "rejected", response: { error: String(error) } };
+                return {
+                  status: ZATCA_INVOICE_STATUS.REJECTED,
+                  response: { error: String(error) },
+                };
               }
               throw error;
             }
@@ -392,27 +436,102 @@ class ZatcaModuleService extends MedusaService({
   }
 
   /** Invoice counts by status — the wizard dashboard (no row data, no XML). */
-  async getZatcaInvoiceSummary(): Promise<{
-    pending: number;
-    reported: number;
-    rejected: number;
-    failed: number;
-    total: number;
-  }> {
+  async getZatcaInvoiceSummary(): Promise<ZatcaInvoiceSummary> {
     const rows = (await this.manager.execute(
       `select status, count(*)::int as count
          from zatca_invoice
         where deleted_at is null
         group by status`,
     )) as { status: string; count: number }[];
-    const summary = { pending: 0, reported: 0, rejected: 0, failed: 0, total: 0 };
+    const documentRows = (await this.manager.execute(
+      `select document_type, count(*)::int as count
+         from zatca_invoice
+        where deleted_at is null
+        group by document_type`,
+    )) as { document_type: ZatcaDocumentType; count: number }[];
+    const remediationRows = (await this.manager.execute(
+      `select id, order_id, source_type, source_id, document_type, status,
+              parent_invoice_id, icv
+         from zatca_invoice
+        where status in ('rejected', 'failed') and deleted_at is null
+        order by updated_at desc
+        limit 10`,
+    )) as (ZatcaTerminalDocument & {
+      status:
+        | typeof ZATCA_INVOICE_STATUS.REJECTED
+        | typeof ZATCA_INVOICE_STATUS.FAILED;
+    })[];
+
+    const summary: ZatcaInvoiceSummary = {
+      pending: 0,
+      reported: 0,
+      rejected: 0,
+      failed: 0,
+      total: 0,
+      documents: { invoice: 0, credit_note: 0, debit_note: 0 },
+      needs_attention: 0,
+      remediation: [],
+    };
     for (const row of rows) {
-      if (row.status in summary) {
-        summary[row.status as keyof typeof summary] = row.count;
-      }
+      if (row.status === ZATCA_INVOICE_STATUS.PENDING) summary.pending = row.count;
+      if (row.status === ZATCA_INVOICE_STATUS.REPORTED) summary.reported = row.count;
+      if (row.status === ZATCA_INVOICE_STATUS.REJECTED) summary.rejected = row.count;
+      if (row.status === ZATCA_INVOICE_STATUS.FAILED) summary.failed = row.count;
       summary.total += row.count;
     }
+    for (const row of documentRows) {
+      summary.documents[row.document_type] = row.count;
+    }
+    summary.needs_attention = summary.rejected + summary.failed;
+    summary.remediation = remediationRows.map((row) =>
+      zatcaRemediationNotice(row, row.status),
+    );
     return summary;
+  }
+
+  async getZatcaRemediationNotice(
+    invoiceId: string,
+  ): Promise<ZatcaRemediationNotice> {
+    const invoice = await this.retrieveZatcaInvoice(invoiceId);
+    if (
+      invoice.status !== ZATCA_INVOICE_STATUS.REJECTED &&
+      invoice.status !== ZATCA_INVOICE_STATUS.FAILED
+    ) {
+      throw new KsaError(
+        `ZATCA invoice ${invoiceId} is ${invoice.status}; no remediation action is available.`,
+        { prefix: "zatca", code: KsaErrorCodes.INVALID_INPUT },
+      );
+    }
+    return zatcaRemediationNotice(
+      invoice,
+      invoice.status,
+    );
+  }
+
+  async getCorrectiveCreditNoteAction(
+    invoiceId: string,
+  ): Promise<ZatcaRemediationNotice> {
+    const invoice = await this.retrieveZatcaInvoice(invoiceId);
+    const notice = await this.getZatcaRemediationNotice(invoiceId);
+    if (
+      notice.action !==
+      ZATCA_REMEDIATION_ACTION.ISSUE_CORRECTIVE_CREDIT_NOTE
+    ) {
+      throw new KsaError(
+        `ZATCA invoice ${invoiceId} does not support a corrective credit-note action.`,
+        { prefix: "zatca", code: KsaErrorCodes.INVALID_INPUT },
+      );
+    }
+    if (invoice.parent_invoice_id) {
+      const parent = await this.retrieveZatcaInvoice(invoice.parent_invoice_id);
+      if (parent.status !== ZATCA_INVOICE_STATUS.REPORTED) {
+        throw new KsaError(
+          `ZATCA invoice ${invoiceId} cannot be corrected until the original invoice is reported.`,
+          { prefix: "zatca", code: KsaErrorCodes.INVALID_INPUT },
+        );
+      }
+    }
+    return notice;
   }
 
   /**
@@ -425,15 +544,19 @@ class ZatcaModuleService extends MedusaService({
     rejected: string[];
     failed: string[];
   }> {
-    const failedRows = await this.listZatcaInvoices({ status: "failed" });
+    const failedRows = await this.listZatcaInvoices({
+      status: ZATCA_INVOICE_STATUS.FAILED,
+    });
     const result: { reported: string[]; rejected: string[]; failed: string[] } =
       { reported: [], rejected: [], failed: [] };
     for (const invoice of failedRows) {
       try {
         const outcome = await this.reportZatcaInvoice(invoice.id);
-        result[outcome.status === "reported" ? "reported" : "rejected"].push(
-          invoice.id,
-        );
+        result[
+          outcome.status === ZATCA_INVOICE_STATUS.REPORTED
+            ? ZATCA_INVOICE_STATUS.REPORTED
+            : ZATCA_INVOICE_STATUS.REJECTED
+        ].push(invoice.id);
       } catch {
         result.failed.push(invoice.id); // transient — stays failed
       }
