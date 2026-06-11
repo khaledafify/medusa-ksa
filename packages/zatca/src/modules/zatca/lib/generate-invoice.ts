@@ -11,6 +11,8 @@ import { generateQr } from "./qr";
 import { signInvoice } from "./signer";
 import {
   ZATCA_DOCUMENT_TYPE,
+  ZATCA_INVOICE_TYPE,
+  ZATCA_INVOICE_TYPE_CODE,
   ZATCA_LIFECYCLE_SOURCE_TYPE,
   ZATCA_INVOICE_STATUS,
   type ZatcaDocumentType,
@@ -37,9 +39,9 @@ import {
 export type { ZatcaDocumentType, ZatcaLifecycleSourceType };
 
 const INVOICE_TYPE_CODE_BY_DOCUMENT_TYPE: Record<ZatcaDocumentType, string> = {
-  [ZATCA_DOCUMENT_TYPE.INVOICE]: "388",
-  [ZATCA_DOCUMENT_TYPE.CREDIT_NOTE]: "381",
-  [ZATCA_DOCUMENT_TYPE.DEBIT_NOTE]: "383",
+  [ZATCA_DOCUMENT_TYPE.INVOICE]: ZATCA_INVOICE_TYPE_CODE.INVOICE,
+  [ZATCA_DOCUMENT_TYPE.CREDIT_NOTE]: ZATCA_INVOICE_TYPE_CODE.CREDIT_NOTE,
+  [ZATCA_DOCUMENT_TYPE.DEBIT_NOTE]: ZATCA_INVOICE_TYPE_CODE.DEBIT_NOTE,
 };
 
 /** Builder input minus the chain-allocated fields; UUID minted if absent. */
@@ -79,7 +81,7 @@ export interface GenerateInvoiceInput
 export interface PendingZatcaInvoiceRecord {
   order_id: string;
   document_type: ZatcaDocumentType;
-  invoice_type: "simplified";
+  invoice_type: typeof ZATCA_INVOICE_TYPE.SIMPLIFIED;
   source_type: ZatcaLifecycleSourceType;
   source_id: string;
   parent_invoice_id: string | null;
@@ -213,7 +215,7 @@ export async function generatePendingInvoice(
   const baseRecord = {
     order_id: orderId,
     document_type: documentType,
-    invoice_type: "simplified" as const,
+    invoice_type: ZATCA_INVOICE_TYPE.SIMPLIFIED,
     source_type: sourceType,
     source_id: resolvedSourceId,
     parent_invoice_id: resolvedParentInvoiceId,

@@ -7,6 +7,8 @@ import {
   ZATCA_DOCUMENT_TYPE,
   ZATCA_INVOICE_STATUS,
   ZATCA_LIFECYCLE_SOURCE_TYPE,
+  ZATCA_MEDUSA_EVENT,
+  ZATCA_NOTE_REASON,
 } from "../modules/zatca/lib/lifecycle";
 import {
   buildRefundCreditNoteTaxBase,
@@ -107,7 +109,7 @@ export async function issueCancellationCreditNote(
       sourceId: orderId,
       parentInvoiceId: originalInvoice.id,
       billingReference: extractInvoiceSerial(originalInvoice.xml),
-      reason: "Order cancelled",
+      reason: ZATCA_NOTE_REASON.ORDER_CANCELLED,
       serialNumber: `CN-CANCEL-${orderId}`,
       issueDate,
       issueTime,
@@ -152,5 +154,5 @@ export default async function zatcaCancelCreditNoteHandler({
 }
 
 export const config: SubscriberConfig = {
-  event: "order.canceled",
+  event: ZATCA_MEDUSA_EVENT.ORDER_CANCELED,
 };

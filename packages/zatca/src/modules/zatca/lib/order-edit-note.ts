@@ -1,4 +1,8 @@
-import { ZATCA_DOCUMENT_TYPE } from "./lifecycle";
+import {
+  ZATCA_DOCUMENT_TYPE,
+  ZATCA_NOTE_REASON,
+  ZATCA_TAX_SCHEME,
+} from "./lifecycle";
 import type { DerivedSimplifiedInvoiceTaxBase } from "./tax-base";
 import type {
   ZatcaDocumentAllowanceCharge,
@@ -16,8 +20,8 @@ type EditDocumentType =
   | typeof ZATCA_DOCUMENT_TYPE.DEBIT_NOTE;
 
 const ORDER_EDIT_REASON_BY_DOCUMENT_TYPE: Record<EditDocumentType, string> = {
-  [ZATCA_DOCUMENT_TYPE.CREDIT_NOTE]: "Order edit decrease",
-  [ZATCA_DOCUMENT_TYPE.DEBIT_NOTE]: "Order edit increase",
+  [ZATCA_DOCUMENT_TYPE.CREDIT_NOTE]: ZATCA_NOTE_REASON.ORDER_EDIT_DECREASE,
+  [ZATCA_DOCUMENT_TYPE.DEBIT_NOTE]: ZATCA_NOTE_REASON.ORDER_EDIT_INCREASE,
 };
 
 export interface OrderEditLifecycleTaxBase {
@@ -187,7 +191,7 @@ export function buildOrderEditLifecycleTaxBase(input: {
     const reason = ORDER_EDIT_REASON_BY_DOCUMENT_TYPE[documentType];
     return {
       id: idx + 1,
-      name: `${reason} @ ${delta.vatPercent}% VAT`,
+      name: `${reason} @ ${delta.vatPercent}% ${ZATCA_TAX_SCHEME.VAT}`,
       quantity: 1,
       unitPriceHalalas: amountHalalas,
       lineExtensionHalalas: amountHalalas,

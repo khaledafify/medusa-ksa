@@ -3,6 +3,13 @@ import { ContainerRegistrationKeys } from "@medusajs/framework/utils";
 
 import { ZATCA_MODULE } from "../modules/zatca";
 import {
+  ZATCA_CURRENCY,
+  ZATCA_MEDUSA_EVENT,
+  ZATCA_ORIGINAL_INVOICE_ORDER_FIELDS,
+  ZATCA_PAYMENT_ORDER_FIELDS,
+  ZATCA_QUERY_ENTITY,
+} from "../modules/zatca/lib/lifecycle";
+import {
   deriveSimplifiedInvoiceTaxBase,
   type OrderGraphForZatcaTaxBase,
 } from "../modules/zatca/lib/tax-base";
@@ -38,15 +45,17 @@ export default async function zatcaIssueInvoiceHandler({
 
   const trigger = service.getTrigger();
   const expectedEvent =
-    trigger === "payment_captured" ? "payment.captured" : "order.placed";
+    trigger === "payment_captured"
+      ? ZATCA_MEDUSA_EVENT.PAYMENT_CAPTURED
+      : ZATCA_MEDUSA_EVENT.ORDER_PLACED;
   if (event.name !== expectedEvent) return;
 
   // Resolve the order id for the configured trigger.
   let orderId: string;
-  if (event.name === "payment.captured") {
+  if (event.name === ZATCA_MEDUSA_EVENT.PAYMENT_CAPTURED) {
     const { data } = await query.graph({
-      entity: "payment",
-      fields: ["id", "payment_collection.order.id"],
+      entity: ZATCA_QUERY_ENTITY.PAYMENT,
+      fields: [...ZATCA_PAYMENT_ORDER_FIELDS],
       filters: { id: event.data.id },
     });
     const payment = data[0] as
@@ -63,45 +72,8 @@ export default async function zatcaIssueInvoiceHandler({
   }
 
   const { data: orders } = await query.graph({
-    entity: "order",
-    fields: [
-      "id",
-      "display_id",
-      "currency_code",
-      "status",
-      "total",
-      "tax_total",
-      "subtotal",
-      "discount_total",
-      "shipping_total",
-      "item_total",
-      "summary.*",
-      "items.id",
-      "items.title",
-      "items.quantity",
-      // quantity is computed from the detail; without this it stays undefined
-      "items.detail.quantity",
-      "items.unit_price",
-      "items.is_tax_inclusive",
-      "items.subtotal",
-      "items.total",
-      "items.tax_total",
-      "items.discount_total",
-      "items.discount_tax_total",
-      "items.tax_lines.rate",
-      "items.tax_lines.total",
-      "items.tax_lines.subtotal",
-      "shipping_methods.id",
-      "shipping_methods.amount",
-      "shipping_methods.is_tax_inclusive",
-      "shipping_methods.subtotal",
-      "shipping_methods.total",
-      "shipping_methods.tax_total",
-      "shipping_methods.discount_total",
-      "shipping_methods.discount_tax_total",
-      "shipping_methods.tax_lines.rate",
-      "shipping_methods.tax_lines.total",
-    ],
+    entity: ZATCA_QUERY_ENTITY.ORDER,
+    fields: [...ZATCA_ORIGINAL_INVOICE_ORDER_FIELDS],
     filters: { id: orderId },
   });
   const order = orders[0] as OrderView | undefined;
@@ -109,7 +81,7 @@ export default async function zatcaIssueInvoiceHandler({
     logger.warn(`[zatca] order ${orderId} not found — skipped`);
     return;
   }
-  if (order.currency_code !== "sar") {
+  if (order.currency_code !== ZATCA_CURRENCY.SAR_LOWERCASE) {
     logger.warn(`[zatca] order ${orderId} is not SAR — skipped`);
     return;
   }
@@ -149,5 +121,5 @@ export default async function zatcaIssueInvoiceHandler({
 }
 
 export const config: SubscriberConfig = {
-  event: ["payment.captured", "order.placed"],
+  event: [ZATCA_MEDUSA_EVENT.PAYMENT_CAPTURED, ZATCA_MEDUSA_EVENT.ORDER_PLACED],
 };

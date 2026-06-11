@@ -6,6 +6,10 @@ import { ZATCA_MODULE } from "../modules/zatca";
 import {
   ZATCA_DOCUMENT_TYPE,
   ZATCA_LIFECYCLE_SOURCE_TYPE,
+  ZATCA_MEDUSA_EVENT,
+  ZATCA_NOTE_REASON,
+  ZATCA_QUERY_ENTITY,
+  ZATCA_RETURN_FIELDS,
 } from "../modules/zatca/lib/lifecycle";
 import { extractInvoiceSerial } from "../modules/zatca/lib/refund-credit-note";
 import {
@@ -101,15 +105,8 @@ export async function issueReturnCreditNote(
   }
 
   const { data } = await deps.queryGraph({
-    entity: "return",
-    fields: [
-      "id",
-      "order_id",
-      "reason",
-      "items.item_id",
-      "items.quantity",
-      "items.received_quantity",
-    ],
+    entity: ZATCA_QUERY_ENTITY.RETURN,
+    fields: [...ZATCA_RETURN_FIELDS],
     filters: { id: eventData.return_id },
   });
   const returnRow = data[0] as ReturnView | undefined;
@@ -133,7 +130,7 @@ export async function issueReturnCreditNote(
       sourceId: eventData.return_id,
       parentInvoiceId: originalInvoice.id,
       billingReference: extractInvoiceSerial(originalInvoice.xml),
-      reason: returnRow.reason ?? "Return received",
+      reason: returnRow.reason ?? ZATCA_NOTE_REASON.RETURN_RECEIVED,
       serialNumber: `CN-${eventData.return_id}`,
       issueDate,
       issueTime,
@@ -184,5 +181,5 @@ export default async function zatcaReturnCreditNoteHandler({
 }
 
 export const config: SubscriberConfig = {
-  event: "order.return_received",
+  event: ZATCA_MEDUSA_EVENT.ORDER_RETURN_RECEIVED,
 };

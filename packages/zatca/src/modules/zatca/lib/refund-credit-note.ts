@@ -5,6 +5,7 @@ import type {
   ZatcaDocumentAllowanceCharge,
   ZatcaInvoiceLine,
 } from "./xml-builder";
+import { ZATCA_ERROR_CODE, ZATCA_NOTE_REASON, ZATCA_TAX_SCHEME } from "./lifecycle";
 
 export interface SnapshotTotals {
   taxInclusiveHalalas: number;
@@ -40,7 +41,7 @@ export interface RefundCreditNoteTaxBase {
 }
 
 export class OverCreditError extends Error {
-  readonly code = "zatca_over_credit";
+  readonly code = ZATCA_ERROR_CODE.OVER_CREDIT;
 
   constructor(
     readonly originalTaxInclusiveHalalas: number,
@@ -48,7 +49,7 @@ export class OverCreditError extends Error {
     readonly candidateHalalas: number,
   ) {
     super(
-      `zatca_over_credit: existing credits ${alreadyCreditedHalalas} plus candidate ${candidateHalalas} exceed original ${originalTaxInclusiveHalalas}`,
+      `${ZATCA_ERROR_CODE.OVER_CREDIT}: existing credits ${alreadyCreditedHalalas} plus candidate ${candidateHalalas} exceed original ${originalTaxInclusiveHalalas}`,
     );
   }
 }
@@ -322,7 +323,7 @@ function partialRefundLines(
     taxHalalas += split.taxHalalas;
     return {
       id: idx + 1,
-      name: `Refund @ ${category.vatPercent}% VAT`,
+      name: `${ZATCA_NOTE_REASON.REFUND} @ ${category.vatPercent}% ${ZATCA_TAX_SCHEME.VAT}`,
       quantity: 1,
       unitPriceHalalas: split.netHalalas,
       lineExtensionHalalas: split.netHalalas,

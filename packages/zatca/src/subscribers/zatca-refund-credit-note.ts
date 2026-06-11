@@ -14,6 +14,10 @@ import {
 import {
   ZATCA_DOCUMENT_TYPE,
   ZATCA_LIFECYCLE_SOURCE_TYPE,
+  ZATCA_MEDUSA_EVENT,
+  ZATCA_NOTE_REASON,
+  ZATCA_PAYMENT_REFUND_FIELDS,
+  ZATCA_QUERY_ENTITY,
 } from "../modules/zatca/lib/lifecycle";
 import type ZatcaModuleService from "../modules/zatca/service";
 import {
@@ -91,14 +95,8 @@ export async function issueRefundCreditNotesForPayment(
   deps: RefundCreditNoteDeps,
 ): Promise<void> {
   const { data } = await deps.queryGraph({
-    entity: "payment",
-    fields: [
-      "id",
-      "refunds.id",
-      "refunds.amount",
-      "refunds.created_at",
-      "payment_collection.order.id",
-    ],
+    entity: ZATCA_QUERY_ENTITY.PAYMENT,
+    fields: [...ZATCA_PAYMENT_REFUND_FIELDS],
     filters: { id: paymentId },
   });
   const payment = data[0] as PaymentRefundView | undefined;
@@ -138,7 +136,7 @@ export async function issueRefundCreditNotesForPayment(
         sourceId: refund.id,
         parentInvoiceId: originalInvoice.id,
         billingReference: extractInvoiceSerial(originalInvoice.xml),
-        reason: "Refund",
+        reason: ZATCA_NOTE_REASON.REFUND,
         serialNumber: `CN-${refund.id}`,
         issueDate,
         issueTime,
@@ -190,5 +188,5 @@ export default async function zatcaRefundCreditNoteHandler({
 }
 
 export const config: SubscriberConfig = {
-  event: "payment.refunded",
+  event: ZATCA_MEDUSA_EVENT.PAYMENT_REFUNDED,
 };

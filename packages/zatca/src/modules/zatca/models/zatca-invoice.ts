@@ -3,10 +3,13 @@ import { model } from "@medusajs/framework/utils";
 import {
   ZATCA_DOCUMENT_TYPE,
   ZATCA_DOCUMENT_TYPES,
+  ZATCA_INVOICE_TYPE,
+  ZATCA_INVOICE_TYPES,
   ZATCA_INVOICE_STATUS,
   ZATCA_INVOICE_STATUSES,
   ZATCA_LIFECYCLE_SOURCE_TYPE,
   ZATCA_LIFECYCLE_SOURCE_TYPES,
+  ZATCA_TABLE,
 } from "../lib/lifecycle";
 
 /**
@@ -19,12 +22,14 @@ import {
  * lifecycle source so one order can have one invoice and multiple notes.
  */
 const ZatcaInvoice = model
-  .define("zatca_invoice", {
+  .define(ZATCA_TABLE.INVOICE, {
     id: model.id({ prefix: "zatinv" }).primaryKey(),
     /** Linked Medusa order (Module Link, not a FK). */
     order_id: model.text(),
     /** v1 ships B2C only; `standard` (B2B) is future work. */
-    invoice_type: model.enum(["simplified"]).default("simplified"),
+    invoice_type: model
+      .enum([...ZATCA_INVOICE_TYPES])
+      .default(ZATCA_INVOICE_TYPE.SIMPLIFIED),
     /** Document kind; all use the UBL Invoice root. */
     document_type: model
       .enum([...ZATCA_DOCUMENT_TYPES])

@@ -4,6 +4,11 @@ import type {
   ZatcaDocumentAllowanceCharge,
   ZatcaInvoiceLine,
 } from "./xml-builder";
+import {
+  ZATCA_ALLOWANCE_CHARGE_REASON,
+  ZATCA_ERROR_CODE,
+  ZATCA_VAT,
+} from "./lifecycle";
 
 interface MoneyLike {
   value?: unknown;
@@ -63,14 +68,14 @@ export interface ReconciliationBuiltTotals {
 }
 
 export class ReconciliationMismatchError extends Error {
-  readonly code = "reconciliation_mismatch";
+  readonly code = ZATCA_ERROR_CODE.RECONCILIATION_MISMATCH;
 
   constructor(
     readonly built: ReconciliationBuiltTotals,
     readonly expected: ReconciliationExpectedTotals,
   ) {
     super(
-      `reconciliation_mismatch: built total/tax ${built.taxInclusiveHalalas}/${built.taxHalalas} does not match expected ${expected.expectedTaxInclusiveHalalas}/${expected.expectedTaxHalalas}`,
+      `${ZATCA_ERROR_CODE.RECONCILIATION_MISMATCH}: built total/tax ${built.taxInclusiveHalalas}/${built.taxHalalas} does not match expected ${expected.expectedTaxInclusiveHalalas}/${expected.expectedTaxHalalas}`,
     );
   }
 }
@@ -90,7 +95,7 @@ function halalas(value: unknown): number {
 }
 
 function rateOf(taxLines?: TaxLineView[] | null): number {
-  return money(taxLines?.[0]?.rate ?? 15);
+  return money(taxLines?.[0]?.rate ?? ZATCA_VAT.DEFAULT_PERCENT);
 }
 
 function quantityOf(item: OrderItemView): number {
@@ -124,7 +129,7 @@ export function deriveSimplifiedInvoiceTaxBase(
       documentAllowances.set(key, {
         amountHalalas: (existing?.amountHalalas ?? 0) + discountExHalalas,
         vatPercent,
-        reason: "discount",
+        reason: ZATCA_ALLOWANCE_CHARGE_REASON.DISCOUNT,
       });
     }
 
@@ -148,7 +153,7 @@ export function deriveSimplifiedInvoiceTaxBase(
     documentCharges.set(key, {
       amountHalalas: (existing?.amountHalalas ?? 0) + taxableHalalas,
       vatPercent,
-      reason: "shipping",
+      reason: ZATCA_ALLOWANCE_CHARGE_REASON.SHIPPING,
     });
   });
 

@@ -1,6 +1,7 @@
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils";
 
 import { ZATCA_MODULE } from "../modules/zatca";
+import { ZATCA_QUERY_ENTITY, ZATCA_QUERY_FIELD } from "../modules/zatca/lib/lifecycle";
 
 interface ContainerLike {
   resolve<T = unknown>(key: string): T;
@@ -27,8 +28,11 @@ export async function ensureZatcaInvoiceOrderLink(
   }>(ContainerRegistrationKeys.QUERY);
 
   const { data: linked } = await query.graph({
-    entity: "order",
-    fields: ["id", "zatca_invoices.id"],
+    entity: ZATCA_QUERY_ENTITY.ORDER,
+    fields: [
+      ZATCA_QUERY_FIELD.ORDER_ID,
+      ZATCA_QUERY_FIELD.LINKED_ZATCA_INVOICE_ID,
+    ],
     filters: { id: orderId },
   });
   const existingLink = linked[0] as

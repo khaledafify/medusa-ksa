@@ -12,6 +12,7 @@ import {
   ZATCA_DOCUMENT_TYPE,
   ZATCA_INVOICE_STATUS,
   ZATCA_LIFECYCLE_SOURCE_TYPE,
+  ZATCA_TABLE,
   type ZatcaDocumentType,
 } from "./lib/lifecycle";
 import {
@@ -439,23 +440,24 @@ class ZatcaModuleService extends MedusaService({
   async getZatcaInvoiceSummary(): Promise<ZatcaInvoiceSummary> {
     const rows = (await this.manager.execute(
       `select status, count(*)::int as count
-         from zatca_invoice
+         from ${ZATCA_TABLE.INVOICE}
         where deleted_at is null
         group by status`,
     )) as { status: string; count: number }[];
     const documentRows = (await this.manager.execute(
       `select document_type, count(*)::int as count
-         from zatca_invoice
+         from ${ZATCA_TABLE.INVOICE}
         where deleted_at is null
         group by document_type`,
     )) as { document_type: ZatcaDocumentType; count: number }[];
     const remediationRows = (await this.manager.execute(
       `select id, order_id, source_type, source_id, document_type, status,
               parent_invoice_id, icv
-         from zatca_invoice
-        where status in ('rejected', 'failed') and deleted_at is null
+         from ${ZATCA_TABLE.INVOICE}
+        where status in (?, ?) and deleted_at is null
         order by updated_at desc
         limit 10`,
+      [ZATCA_INVOICE_STATUS.REJECTED, ZATCA_INVOICE_STATUS.FAILED],
     )) as (ZatcaTerminalDocument & {
       status:
         | typeof ZATCA_INVOICE_STATUS.REJECTED
@@ -468,7 +470,11 @@ class ZatcaModuleService extends MedusaService({
       rejected: 0,
       failed: 0,
       total: 0,
-      documents: { invoice: 0, credit_note: 0, debit_note: 0 },
+      documents: {
+        [ZATCA_DOCUMENT_TYPE.INVOICE]: 0,
+        [ZATCA_DOCUMENT_TYPE.CREDIT_NOTE]: 0,
+        [ZATCA_DOCUMENT_TYPE.DEBIT_NOTE]: 0,
+      },
       needs_attention: 0,
       remediation: [],
     };

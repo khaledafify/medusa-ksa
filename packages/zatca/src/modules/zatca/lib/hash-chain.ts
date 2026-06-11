@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { ZATCA_INVOICE_STATUS, ZATCA_TABLE } from "./lifecycle";
+
 /**
  * ICV/PIH hash-chain allocation (ADR-0004 amended).
  *
@@ -62,7 +64,13 @@ export interface ChainHead {
  */
 export async function readChainHead(ex: SqlExecutor): Promise<ChainHead | null> {
   const rows = (await ex.execute(
-    `select icv, invoice_hash from zatca_invoice order by icv desc limit 1`,
+    `select icv, invoice_hash
+       from ${ZATCA_TABLE.INVOICE}
+      where icv is not null
+        and invoice_hash is not null
+        and status in ('${ZATCA_INVOICE_STATUS.PENDING}', '${ZATCA_INVOICE_STATUS.REPORTED}', '${ZATCA_INVOICE_STATUS.REJECTED}', '${ZATCA_INVOICE_STATUS.FAILED}')
+      order by icv desc
+      limit 1`,
   )) as { icv: number | string; invoice_hash: string }[];
   const head = rows[0];
   if (!head) return null;

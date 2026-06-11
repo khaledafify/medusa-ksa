@@ -1,6 +1,8 @@
 import type { SqlExecutor } from "./hash-chain";
 import {
+  ZATCA_ERROR_CODE,
   ZATCA_INVOICE_STATUS,
+  ZATCA_TABLE,
   type ZatcaDocumentType,
 } from "./lifecycle";
 import { zatcaResponseWithRemediation } from "./remediation";
@@ -120,7 +122,7 @@ export async function processPendingReports(
   const rows = (await ex.execute(
     `select id, order_id, source_type, source_id, document_type, parent_invoice_id,
             icv, attempts, created_at, submitted_at, uuid, invoice_hash, xml
-       from zatca_invoice
+       from ${ZATCA_TABLE.INVOICE}
       where status = '${ZATCA_INVOICE_STATUS.PENDING}' and deleted_at is null
       order by created_at
       limit ${Math.trunc(limit)}
@@ -138,9 +140,9 @@ export async function processPendingReports(
   for (const invoice of rows) {
     if (isExpired(invoice, now)) {
       await ex.execute(
-        `update zatca_invoice
+        `update ${ZATCA_TABLE.INVOICE}
             set status = '${ZATCA_INVOICE_STATUS.FAILED}',
-                zatca_response = ${jsonLit(zatcaResponseWithRemediation(invoice, ZATCA_INVOICE_STATUS.FAILED, { error: "reporting_window_expired" }))},
+                zatca_response = ${jsonLit(zatcaResponseWithRemediation(invoice, ZATCA_INVOICE_STATUS.FAILED, { error: ZATCA_ERROR_CODE.REPORTING_WINDOW_EXPIRED }))},
                 updated_at = now()
           where id = ${lit(invoice.id)}`,
       );
@@ -155,7 +157,7 @@ export async function processPendingReports(
     try {
       const outcome = await options.report(invoice);
       await ex.execute(
-        `update zatca_invoice
+        `update ${ZATCA_TABLE.INVOICE}
             set status = ${lit(outcome.status)},
                 zatca_response = ${jsonLit(
                   outcome.status === ZATCA_INVOICE_STATUS.REJECTED
@@ -171,7 +173,7 @@ export async function processPendingReports(
       result[outcome.status].push(invoice.id);
     } catch (error) {
       await ex.execute(
-        `update zatca_invoice
+        `update ${ZATCA_TABLE.INVOICE}
             set zatca_response = ${jsonLit({ error: String(error) })},
                 submitted_at = ${tsLit(now)},
                 attempts = ${invoice.attempts + 1},

@@ -7,6 +7,7 @@ import {
 
 import { ZATCA_MODULE } from "../modules/zatca";
 import {
+  ZATCA_ERROR_CODE,
   ZATCA_INVOICE_STATUS,
   type ZatcaInvoiceStatus,
 } from "../modules/zatca/lib/lifecycle";
@@ -62,7 +63,7 @@ const generateLifecycleDocumentStep = createStep<
     }
     if (
       invoice.status === ZATCA_INVOICE_STATUS.FAILED &&
-      invoice.zatca_response?.error === "reconciliation_mismatch"
+      invoice.zatca_response?.error === ZATCA_ERROR_CODE.RECONCILIATION_MISMATCH
     ) {
       const built = invoice.zatca_response.built as ConstructorParameters<
         typeof ReconciliationMismatchError

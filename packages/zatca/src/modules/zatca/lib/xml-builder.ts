@@ -5,6 +5,14 @@ import {
   SIMPLIFIED_INVOICE_TEMPLATE,
   TAX_SUBTOTAL_TEMPLATE,
 } from "./templates/simplified-invoice";
+import {
+  ZATCA_ALLOWANCE_CHARGE_REASON,
+  ZATCA_CURRENCY,
+  ZATCA_INVOICE_TYPE_CODE,
+  ZATCA_INVOICE_TYPE_NAME,
+  ZATCA_PAYMENT_MEANS_CODE,
+  ZATCA_TAX_CATEGORY,
+} from "./lifecycle";
 
 /**
  * Simplified (B2C) UBL 2.1 invoice builder.
@@ -151,7 +159,9 @@ function fill(template: string, values: Record<string, string>): string {
 }
 
 function categoryIdFor(vatPercent: number): string {
-  return vatPercent > 0 ? "S" : "O";
+  return vatPercent > 0
+    ? ZATCA_TAX_CATEGORY.STANDARD_RATE
+    : ZATCA_TAX_CATEGORY.OUT_OF_SCOPE;
 }
 
 function assertHalalas(value: number, label: string): void {
@@ -168,8 +178,8 @@ function renderAllowanceCharge(
   return (
     "    <cac:AllowanceCharge>\n" +
     `        <cbc:ChargeIndicator>${String(chargeIndicator)}</cbc:ChargeIndicator>\n` +
-    `        <cbc:AllowanceChargeReason>${escapeXml(charge.reason ?? (chargeIndicator ? "shipping" : "discount"))}</cbc:AllowanceChargeReason>\n` +
-    `        <cbc:Amount currencyID="SAR">${formatHalalas(charge.amountHalalas)}</cbc:Amount>\n` +
+    `        <cbc:AllowanceChargeReason>${escapeXml(charge.reason ?? (chargeIndicator ? ZATCA_ALLOWANCE_CHARGE_REASON.SHIPPING : ZATCA_ALLOWANCE_CHARGE_REASON.DISCOUNT))}</cbc:AllowanceChargeReason>\n` +
+    `        <cbc:Amount currencyID="${ZATCA_CURRENCY.SAR}">${formatHalalas(charge.amountHalalas)}</cbc:Amount>\n` +
     fill(ALLOWANCE_TAX_CATEGORY_TEMPLATE, {
       SET_CATEGORY_ID: categoryIdFor(charge.vatPercent),
       SET_CATEGORY_PERCENT: String(charge.vatPercent),
@@ -293,8 +303,8 @@ export function buildSimplifiedInvoiceXml(
   const zeroDiscountAllowance =
     "    <cac:AllowanceCharge>\n" +
     "        <cbc:ChargeIndicator>false</cbc:ChargeIndicator>\n" +
-    "        <cbc:AllowanceChargeReason>discount</cbc:AllowanceChargeReason>\n" +
-    "        <cbc:Amount currencyID=\"SAR\">0.00</cbc:Amount>\n" +
+    `        <cbc:AllowanceChargeReason>${ZATCA_ALLOWANCE_CHARGE_REASON.DISCOUNT}</cbc:AllowanceChargeReason>\n` +
+    `        <cbc:Amount currencyID="${ZATCA_CURRENCY.SAR}">0.00</cbc:Amount>\n` +
     allowanceCategories +
     "\n    </cac:AllowanceCharge>\n";
   const allowanceCharges =
@@ -303,7 +313,7 @@ export function buildSimplifiedInvoiceXml(
       : zeroDiscountAllowance) +
     documentCharges.map((charge) => renderAllowanceCharge(charge, true)).join("");
   const chargeTotal = chargeTotalHalalas
-    ? `        <cbc:ChargeTotalAmount currencyID="SAR">${formatHalalas(chargeTotalHalalas)}</cbc:ChargeTotalAmount>\n`
+    ? `        <cbc:ChargeTotalAmount currencyID="${ZATCA_CURRENCY.SAR}">${formatHalalas(chargeTotalHalalas)}</cbc:ChargeTotalAmount>\n`
     : "";
 
   const invoiceLines = lineTotals
@@ -356,8 +366,12 @@ export function buildSimplifiedInvoiceXml(
     SET_INVOICE_UUID: escapeXml(props.uuid),
     SET_ISSUE_DATE: escapeXml(props.issueDate),
     SET_ISSUE_TIME: escapeXml(props.issueTime),
-    SET_INVOICE_TYPE_NAME: escapeXml(props.invoiceTypeName ?? "0200000"),
-    SET_INVOICE_TYPE_CODE: escapeXml(props.invoiceTypeCode ?? "388"),
+    SET_INVOICE_TYPE_NAME: escapeXml(
+      props.invoiceTypeName ?? ZATCA_INVOICE_TYPE_NAME.PLAIN_SIMPLIFIED,
+    ),
+    SET_INVOICE_TYPE_CODE: escapeXml(
+      props.invoiceTypeCode ?? ZATCA_INVOICE_TYPE_CODE.INVOICE,
+    ),
     SET_NOTE: note,
     SET_INVOICE_COUNTER: String(props.icv),
     SET_PREVIOUS_INVOICE_HASH: escapeXml(props.pih),
@@ -371,7 +385,9 @@ export function buildSimplifiedInvoiceXml(
     SET_SUPPLIER_NAME: escapeXml(props.supplier.name),
     SET_CUSTOMER_PARTY: customerParty,
     SET_BILLING_REFERENCE: billingReference,
-    SET_PAYMENT_MEANS_CODE: escapeXml(props.paymentMeansCode ?? "10"),
+    SET_PAYMENT_MEANS_CODE: escapeXml(
+      props.paymentMeansCode ?? ZATCA_PAYMENT_MEANS_CODE.CASH,
+    ),
     SET_INSTRUCTION_NOTE: instructionNote,
     SET_ALLOWANCE_CHARGES: allowanceCharges,
     SET_TAX_TOTAL: formatHalalas(taxHalalas),
