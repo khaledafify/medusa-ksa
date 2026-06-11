@@ -3,7 +3,12 @@ import {
   ContainerRegistrationKeys,
   Modules,
 } from "@medusajs/framework/utils";
-import type { ZatcaModuleService } from "medusa-plugin-zatca/modules/zatca";
+import {
+  ZATCA_DOCUMENT_TYPE,
+  ZATCA_INVOICE_STATUS,
+  ZATCA_LIFECYCLE_SOURCE_TYPE,
+  type ZatcaModuleService,
+} from "medusa-plugin-zatca/modules/zatca";
 
 /**
  * T1.4 gate: the ZatcaInvoice ↔ Order Module Link is synced and queryable.
@@ -34,8 +39,8 @@ export default async function testZatcaLink({ container }: ExecArgs) {
   const suffix = Date.now().toString(16).slice(-12).padStart(12, "0");
   const invoice = await zatcaService.createZatcaInvoices({
     order_id: order.id,
-    document_type: "invoice",
-    source_type: "order",
+    document_type: ZATCA_DOCUMENT_TYPE.INVOICE,
+    source_type: ZATCA_LIFECYCLE_SOURCE_TYPE.ORDER,
     source_id: order.id,
     lines_snapshot: { lines: [] },
     uuid: `00000000-0000-4000-8000-${suffix}`,
@@ -43,11 +48,12 @@ export default async function testZatcaLink({ container }: ExecArgs) {
     pih: "test-pih",
     invoice_hash: "test-hash",
     xml: "<Invoice/>",
+    status: ZATCA_INVOICE_STATUS.PENDING,
   });
   const creditNote1 = await zatcaService.createZatcaInvoices({
     order_id: order.id,
-    document_type: "credit_note",
-    source_type: "refund",
+    document_type: ZATCA_DOCUMENT_TYPE.CREDIT_NOTE,
+    source_type: ZATCA_LIFECYCLE_SOURCE_TYPE.REFUND,
     source_id: `refund_${suffix}`,
     parent_invoice_id: invoice.id,
     billing_reference: `INV-${order.id}`,
@@ -58,11 +64,12 @@ export default async function testZatcaLink({ container }: ExecArgs) {
     pih: "test-hash",
     invoice_hash: "test-credit-hash-1",
     xml: "<Invoice/>",
+    status: ZATCA_INVOICE_STATUS.PENDING,
   });
   const creditNote2 = await zatcaService.createZatcaInvoices({
     order_id: order.id,
-    document_type: "credit_note",
-    source_type: "return",
+    document_type: ZATCA_DOCUMENT_TYPE.CREDIT_NOTE,
+    source_type: ZATCA_LIFECYCLE_SOURCE_TYPE.RETURN,
     source_id: `return_${suffix}`,
     parent_invoice_id: invoice.id,
     billing_reference: `INV-${order.id}`,
@@ -73,6 +80,7 @@ export default async function testZatcaLink({ container }: ExecArgs) {
     pih: "test-credit-hash-1",
     invoice_hash: "test-credit-hash-2",
     xml: "<Invoice/>",
+    status: ZATCA_INVOICE_STATUS.PENDING,
   });
   const documents = [invoice, creditNote1, creditNote2];
 
@@ -107,10 +115,10 @@ export default async function testZatcaLink({ container }: ExecArgs) {
 
     const { data: orderRows } = await query.graph({
       entity: "order",
-      fields: ["id", "zatca_invoice.id", "zatca_invoice.document_type"],
+      fields: ["id", "zatca_invoices.id", "zatca_invoices.document_type"],
       filters: { id: order.id },
     });
-    const linkedDocuments = orderRows[0]?.zatca_invoice;
+    const linkedDocuments = orderRows[0]?.zatca_invoices;
     const linkedList = Array.isArray(linkedDocuments)
       ? linkedDocuments
       : linkedDocuments

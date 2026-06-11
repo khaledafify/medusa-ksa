@@ -70,13 +70,13 @@ export default async function testZatcaSubscriber({ container }: ExecArgs) {
   const query = container.resolve(ContainerRegistrationKeys.QUERY);
   const { data } = await query.graph({
     entity: "order",
-    fields: ["id", "zatca_invoice.id", "zatca_invoice.status"],
+    fields: ["id", "zatca_invoices.id", "zatca_invoices.status"],
     filters: { id: order.id },
   });
-  const linked = data[0]?.zatca_invoice;
+  const linked = data[0]?.zatca_invoices;
   const linkedList = Array.isArray(linked) ? linked : linked ? [linked] : [];
   if (!linkedList.some((row) => row.id === invoice.id)) {
-    throw new Error("order → zatca_invoice link not traversable");
+    throw new Error("order → zatca_invoices link not traversable");
   }
 
   console.log(

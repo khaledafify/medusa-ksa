@@ -34,6 +34,7 @@
     "dev": "medusa develop",
     "e2e:moyasar": "medusa exec ./src/scripts/e2e-moyasar.ts",
     "e2e:paid-refund": "medusa exec ./src/scripts/e2e-paid-refund.ts",
+    "e2e:zatca-lifecycle": "medusa exec ./src/scripts/e2e-zatca-lifecycle.ts",
     "start": "medusa start"
   }
 }

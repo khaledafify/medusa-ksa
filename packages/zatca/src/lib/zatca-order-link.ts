@@ -28,13 +28,13 @@ export async function ensureZatcaInvoiceOrderLink(
 
   const { data: linked } = await query.graph({
     entity: "order",
-    fields: ["id", "zatca_invoice.id"],
+    fields: ["id", "zatca_invoices.id"],
     filters: { id: orderId },
   });
   const existingLink = linked[0] as
-    | { zatca_invoice?: { id: string } | { id: string }[] | null }
+    | { zatca_invoices?: { id: string } | { id: string }[] | null }
     | undefined;
-  if (linkedZatcaInvoiceIds(existingLink?.zatca_invoice).has(invoiceId)) {
+  if (linkedZatcaInvoiceIds(existingLink?.zatca_invoices).has(invoiceId)) {
     return;
   }
 
