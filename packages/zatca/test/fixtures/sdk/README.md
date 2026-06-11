@@ -12,6 +12,13 @@ developer portal (https://sandbox.zatca.gov.sa → Download SDK).
 | `sample-cert.pem` | `Data/Certificates/cert.pem` | SDK sample signing certificate (test-only, public SDK material). |
 | `sample-priv-key.pem` | `Data/Certificates/ec-secp256k1-priv-key.pem` | SDK sample `secp256k1` private key (test-only, public SDK material — **never** a real credential). |
 | `pih.txt` | `Data/PIH/pih.txt` | SDK seed Previous Invoice Hash. |
+| `generated/invoice-discount.xml` | `scripts/emit-sdk-validation-fixtures.mjs` | v1.1 invoice fixture with a document-level discount allowance. |
+| `generated/invoice-shipping.xml` | `scripts/emit-sdk-validation-fixtures.mjs` | v1.1 invoice fixture with a document-level shipping charge and `ChargeTotalAmount`. |
+| `generated/invoice-tax-inclusive.xml` | `scripts/emit-sdk-validation-fixtures.mjs` | v1.1 invoice fixture emitted from a tax-inclusive Medusa order graph. |
+| `generated/invoice-multi-rate.xml` | `scripts/emit-sdk-validation-fixtures.mjs` | v1.1 invoice fixture with multiple VAT categories. |
+| `generated/credit-note-full.xml` | `scripts/emit-sdk-validation-fixtures.mjs` | v1.1 full credit note fixture (`InvoiceTypeCode` 381). |
+| `generated/credit-note-partial.xml` | `scripts/emit-sdk-validation-fixtures.mjs` | v1.1 partial credit note fixture (`InvoiceTypeCode` 381). |
+| `generated/debit-note.xml` | `scripts/emit-sdk-validation-fixtures.mjs` | v1.1 debit note fixture (`InvoiceTypeCode` 383). |
 
 ## Known-good invariants (verified with the SDK validator)
 
@@ -26,6 +33,11 @@ developer portal (https://sandbox.zatca.gov.sa → Download SDK).
   XAdES signature + TLV QR, golden data, SDK test credentials):
   XSD / EN / KSA / QR / SIGNATURE / PIH all **PASSED** (GLOBAL = PASSED,
   SDK 3.3.8, JDK 11).
+- `fatoora -validate` on every XML file in `generated/`:
+  XSD / EN / KSA / QR / SIGNATURE / PIH all **PASSED** (GLOBAL = PASSED,
+  SDK 3.3.8, OpenJDK 11.0.31). These cover discount, shipping,
+  tax-inclusive, multi-rate, full credit note, partial credit note, and debit
+  note v1.1 paths.
 
 ## Running the validator locally
 
