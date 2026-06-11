@@ -1,4 +1,4 @@
-import type { ZodError, ZodSchema } from "zod";
+import type { TypeOf, ZodError, ZodTypeAny } from "zod";
 
 import { KsaError, KsaErrorCodes } from "./errors.js";
 
@@ -89,12 +89,12 @@ function describeIssues(error: ZodError, envMap: EnvMap): string {
  * @throws {KsaError} with code `invalid_options`, naming the offending field(s)
  * and the env var to set when applicable. Never includes the bad values.
  */
-export function validateOptions<T>(
-  schema: ZodSchema<T>,
+export function validateOptions<S extends ZodTypeAny>(
+  schema: S,
   rawOptions: unknown,
   env: NodeJS.ProcessEnv = process.env,
   opts: ValidateOptionsConfig = {},
-): T {
+): TypeOf<S> {
   const prefix = opts.prefix ?? DEFAULT_PREFIX;
   const envMap = opts.envMap ?? {};
 
@@ -112,7 +112,7 @@ export function validateOptions<T>(
     );
   }
 
-  return result.data;
+  return result.data as TypeOf<S>;
 }
 
 /**
@@ -135,8 +135,8 @@ export type MedusaLoader = (...args: unknown[]) => Promise<void>;
  *   resolveOptions: (args) => (args[0] as { options?: unknown }).options,
  * });
  */
-export function createLoader<T>(
-  schema: ZodSchema<T>,
+export function createLoader<S extends ZodTypeAny>(
+  schema: S,
   opts: ValidateOptionsConfig & {
     /**
      * Extract the raw options object from the loader arguments. Defaults to
@@ -146,7 +146,7 @@ export function createLoader<T>(
     /**
      * Invoked with the validated, typed options after a successful parse.
      */
-    onValidated?: (options: T) => void | Promise<void>;
+    onValidated?: (options: TypeOf<S>) => void | Promise<void>;
   } = {},
 ): MedusaLoader {
   const { resolveOptions, onValidated, ...validateConfig } = opts;
