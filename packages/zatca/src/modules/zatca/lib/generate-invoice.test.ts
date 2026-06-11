@@ -217,7 +217,13 @@ describe.runIf(databaseUrl)("generatePendingInvoice (real chain, pg)", () => {
       Array.from({ length: N }, (_, i) => generateForOrder(`order_${i}`)),
     );
 
-    const { rows } = await pool.query(
+    const { rows } = await pool.query<{
+      icv: number;
+      pih: string;
+      invoice_hash: string;
+      xml: string;
+      status: string;
+    }>(
       `select icv, pih, invoice_hash, xml, status from ${schema}.zatca_invoice order by icv asc`,
     );
 
