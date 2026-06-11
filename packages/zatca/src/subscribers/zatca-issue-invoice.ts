@@ -1,8 +1,11 @@
 import type { SubscriberArgs, SubscriberConfig } from "@medusajs/framework";
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils";
-import { sarToHalalas } from "@medusa-ksa/core";
 
 import { ZATCA_MODULE } from "../modules/zatca";
+import {
+  deriveSimplifiedInvoiceTaxBase,
+  type OrderGraphForZatcaTaxBase,
+} from "../modules/zatca/lib/tax-base";
 import type ZatcaModuleService from "../modules/zatca/service";
 import { reportInvoiceWorkflow } from "../workflows/report-invoice";
 
@@ -10,32 +13,18 @@ import { reportInvoiceWorkflow } from "../workflows/report-invoice";
  * Invoice issuance subscriber (S5, PRD §1.3): listens to both supported
  * triggers and acts only on the configured one (`payment_captured` default,
  * `order_placed` for COD/auth-only stores). Idempotent — the unique
- * `order_id` plus the service's existence check mean a re-fired event never
- * mints a second invoice.
+ * `(source_type, source_id)` plus the service's existence check mean a
+ * re-fired event never mints a second invoice.
  *
  * Reporting failures never propagate: the invoice stays pending for the
  * retry engine. The order is never affected.
  */
 
-interface OrderLine {
-  id: number;
-  name: string;
-  quantity: number;
-  unitPriceHalalas: number;
-  vatPercent: number;
-}
-
 /** The slice of the order graph this subscriber reads. */
-interface OrderView {
-  id: string;
+interface OrderView extends OrderGraphForZatcaTaxBase {
   display_id: number;
   currency_code: string;
-  items?: ({
-    title: string;
-    quantity: number;
-    unit_price: number;
-    tax_lines?: { rate: number }[] | null;
-  } | null)[];
+  status: string;
 }
 
 export default async function zatcaIssueInvoiceHandler({
@@ -78,13 +67,39 @@ export default async function zatcaIssueInvoiceHandler({
       "id",
       "display_id",
       "currency_code",
+      "status",
+      "total",
+      "tax_total",
+      "subtotal",
+      "discount_total",
+      "shipping_total",
+      "item_total",
+      "summary.*",
       "items.id",
       "items.title",
       "items.quantity",
       // quantity is computed from the detail; without this it stays undefined
       "items.detail.quantity",
       "items.unit_price",
+      "items.is_tax_inclusive",
+      "items.subtotal",
+      "items.total",
+      "items.tax_total",
+      "items.discount_total",
+      "items.discount_tax_total",
       "items.tax_lines.rate",
+      "items.tax_lines.total",
+      "items.tax_lines.subtotal",
+      "shipping_methods.id",
+      "shipping_methods.amount",
+      "shipping_methods.is_tax_inclusive",
+      "shipping_methods.subtotal",
+      "shipping_methods.total",
+      "shipping_methods.tax_total",
+      "shipping_methods.discount_total",
+      "shipping_methods.discount_tax_total",
+      "shipping_methods.tax_lines.rate",
+      "shipping_methods.tax_lines.total",
     ],
     filters: { id: orderId },
   });
@@ -97,22 +112,17 @@ export default async function zatcaIssueInvoiceHandler({
     logger.warn(`[zatca] order ${orderId} is not SAR — skipped`);
     return;
   }
+  if (order.status === "canceled") {
+    logger.warn(`[zatca] order ${orderId} is canceled — skipped`);
+    return;
+  }
+  if (Number(order.total) <= 0) {
+    logger.warn(`[zatca] order ${orderId} has a zero total — skipped`);
+    return;
+  }
 
-  const items = order.items ?? [];
-  const lines: OrderLine[] = items.flatMap((item, idx) =>
-    item
-      ? [
-          {
-            id: idx + 1,
-            name: item.title,
-            quantity: Number(item.quantity),
-            unitPriceHalalas: sarToHalalas(Number(item.unit_price)),
-            vatPercent: Number(item.tax_lines?.[0]?.rate ?? 15),
-          },
-        ]
-      : [],
-  );
-  if (lines.length === 0) {
+  const taxBase = deriveSimplifiedInvoiceTaxBase(order);
+  if (taxBase.lines.length === 0) {
     logger.warn(`[zatca] order ${orderId} has no items — skipped`);
     return;
   }
@@ -124,7 +134,11 @@ export default async function zatcaIssueInvoiceHandler({
       serialNumber: `INV-${order.display_id}`,
       issueDate: now.toISOString().slice(0, 10),
       issueTime: now.toISOString().slice(11, 19),
-      lines,
+      lines: taxBase.lines,
+      documentAllowances: taxBase.documentAllowances,
+      documentCharges: taxBase.documentCharges,
+      expectedTaxInclusiveHalalas: taxBase.expectedTaxInclusiveHalalas,
+      expectedTaxHalalas: taxBase.expectedTaxHalalas,
     },
   });
 

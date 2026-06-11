@@ -130,6 +130,136 @@ describe("buildSimplifiedInvoiceXml (general)", () => {
     expect(xml).toContain('5305" schemeAgencyID="6">O</cbc:ID>');
   });
 
+  it("renders a document-level discount allowance in the tax base", () => {
+    const built = buildSimplifiedInvoiceXml({
+      ...goldenProps,
+      lines: [
+        {
+          id: 1,
+          name: "Discounted taxable item",
+          quantity: 2,
+          unitPriceHalalas: 10000,
+          vatPercent: 15,
+        },
+      ],
+      documentAllowances: [
+        {
+          amountHalalas: 2000,
+          vatPercent: 15,
+          reason: "discount",
+        },
+      ],
+    });
+
+    expect(built.taxExclusiveHalalas).toBe(18000);
+    expect(built.taxHalalas).toBe(2700);
+    expect(built.taxInclusiveHalalas).toBe(20700);
+    expect(built.xml).toContain(
+      "<cbc:LineExtensionAmount currencyID=\"SAR\">200.00</cbc:LineExtensionAmount>",
+    );
+    expect(built.xml).toContain(
+      "<cbc:ChargeIndicator>false</cbc:ChargeIndicator>\n        <cbc:AllowanceChargeReason>discount</cbc:AllowanceChargeReason>\n        <cbc:Amount currencyID=\"SAR\">20.00</cbc:Amount>",
+    );
+    expect(built.xml).toContain(
+      "<cbc:TaxableAmount currencyID=\"SAR\">180.00</cbc:TaxableAmount>",
+    );
+    expect(built.xml).toContain(
+      "<cbc:AllowanceTotalAmount currencyID=\"SAR\">20.00</cbc:AllowanceTotalAmount>",
+    );
+  });
+
+  it("renders shipping as a document-level charge with ChargeTotalAmount", () => {
+    const built = buildSimplifiedInvoiceXml({
+      ...goldenProps,
+      lines: [
+        {
+          id: 1,
+          name: "Shipped taxable item",
+          quantity: 1,
+          unitPriceHalalas: 10000,
+          vatPercent: 15,
+        },
+      ],
+      documentCharges: [
+        {
+          amountHalalas: 1000,
+          vatPercent: 15,
+          reason: "shipping",
+        },
+      ],
+    });
+
+    expect(built.taxExclusiveHalalas).toBe(11000);
+    expect(built.taxHalalas).toBe(1650);
+    expect(built.taxInclusiveHalalas).toBe(12650);
+    expect(built.xml).toContain(
+      "<cbc:ChargeIndicator>true</cbc:ChargeIndicator>\n        <cbc:AllowanceChargeReason>shipping</cbc:AllowanceChargeReason>\n        <cbc:Amount currencyID=\"SAR\">10.00</cbc:Amount>",
+    );
+    expect(built.xml).toContain(
+      "<cbc:TaxableAmount currencyID=\"SAR\">110.00</cbc:TaxableAmount>",
+    );
+    expect(built.xml).toContain(
+      "<cbc:ChargeTotalAmount currencyID=\"SAR\">10.00</cbc:ChargeTotalAmount>",
+    );
+  });
+
+  it("groups tax subtotals by VAT rate", () => {
+    const built = buildSimplifiedInvoiceXml({
+      ...goldenProps,
+      lines: [
+        {
+          id: 1,
+          name: "Standard rated item",
+          quantity: 1,
+          unitPriceHalalas: 10000,
+          vatPercent: 15,
+        },
+        {
+          id: 2,
+          name: "Out of scope item",
+          quantity: 1,
+          unitPriceHalalas: 5000,
+          vatPercent: 0,
+        },
+      ],
+    });
+
+    expect(built.taxExclusiveHalalas).toBe(15000);
+    expect(built.taxHalalas).toBe(1500);
+    expect(built.taxInclusiveHalalas).toBe(16500);
+    expect(built.xml).toContain(
+      "<cbc:TaxableAmount currencyID=\"SAR\">100.00</cbc:TaxableAmount>",
+    );
+    expect(built.xml).toContain(
+      "<cbc:TaxableAmount currencyID=\"SAR\">50.00</cbc:TaxableAmount>",
+    );
+    expect(built.xml).toContain("<cbc:Percent>15.00</cbc:Percent>");
+    expect(built.xml).toContain("<cbc:Percent>0.00</cbc:Percent>");
+  });
+
+  it("renders fractional quantities without changing the layout or throwing", () => {
+    const built = buildSimplifiedInvoiceXml({
+      ...goldenProps,
+      lines: [
+        {
+          id: 1,
+          name: "Weighted item",
+          quantity: 1.5,
+          unitPriceHalalas: 1000,
+          lineExtensionHalalas: 1500,
+          vatPercent: 15,
+        },
+      ],
+    });
+
+    expect(built.taxExclusiveHalalas).toBe(1500);
+    expect(built.taxHalalas).toBe(225);
+    expect(built.taxInclusiveHalalas).toBe(1725);
+    expect(built.xml).toContain(
+      "<cbc:InvoicedQuantity unitCode=\"PCE\">1.500000</cbc:InvoicedQuantity>",
+    );
+  });
+
   it("rejects empty invoices and invalid money", () => {
     expect(() => buildSimplifiedInvoiceXml({ ...goldenProps, lines: [] })).toThrow();
     expect(() =>
@@ -161,7 +291,7 @@ describe("buildSimplifiedInvoiceXml (general)", () => {
     });
     expect(xml).toContain('name="0200000">381</cbc:InvoiceTypeCode>');
     expect(xml).toContain(
-      "<cac:BillingReference>\n        <cac:InvoiceDocumentReference>\n            <cbc:ID>Invoice Number: SME00010</cbc:ID>",
+      "<cac:BillingReference>\n        <cac:InvoiceDocumentReference>\n            <cbc:ID>SME00010</cbc:ID>",
     );
     // InstructionNote stays inside PaymentMeans (BR-KSA-17).
     expect(xml).toMatch(

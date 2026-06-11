@@ -161,6 +161,25 @@ describe("generatePendingInvoice (end-to-end golden gate)", () => {
     ).rejects.toThrow();
     expect(persisted).toHaveLength(0);
   });
+
+  it("does not persist when reconciliation fails", async () => {
+    const persisted: PendingZatcaInvoiceRecord[] = [];
+    await expect(
+      generatePendingInvoice(
+        fakeExecutor(null),
+        {
+          ...goldenInput,
+          expectedTaxInclusiveHalalas: 99999,
+          expectedTaxHalalas: 3015,
+        },
+        (r) => {
+          persisted.push(r);
+          return Promise.resolve();
+        },
+      ),
+    ).rejects.toThrow(/reconciliation_mismatch/);
+    expect(persisted).toHaveLength(0);
+  });
 });
 
 describe("secret hygiene (PRD §6 credential-security gate)", () => {

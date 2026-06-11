@@ -44,12 +44,23 @@ export interface ZatcaInvoiceLine {
   /** Sequential line id, 1-based. */
   id: number;
   name: string;
-  /** Integer quantity (UBL renders it with 6 decimals). */
+  /** Quantity (UBL renders it with 6 decimals; fractional quantities are valid). */
   quantity: number;
   /** Unit price in integer halalas. */
   unitPriceHalalas: number;
+  /** Optional authoritative line extension amount, pre-discount and ex-tax. */
+  lineExtensionHalalas?: number;
   /** VAT percent, e.g. 15. Zero renders category "O" (out of scope). */
   vatPercent: number;
+}
+
+export interface ZatcaDocumentAllowanceCharge {
+  /** Ex-tax amount in integer halalas. */
+  amountHalalas: number;
+  /** VAT percent whose tax category this allowance/charge belongs to. */
+  vatPercent: number;
+  /** UBL AllowanceChargeReason; defaults to `discount` or `shipping`. */
+  reason?: string;
 }
 
 export interface SimplifiedInvoiceProps {
@@ -81,6 +92,10 @@ export interface SimplifiedInvoiceProps {
   billingReference?: string;
   /** Reason for the credit/debit note (KSA-10, BR-KSA-17). */
   instructionNote?: string;
+  /** Document-level discounts, grouped by VAT category, ex-tax. */
+  documentAllowances?: ZatcaDocumentAllowanceCharge[];
+  /** Document-level charges, used for shipping, grouped by VAT category, ex-tax. */
+  documentCharges?: ZatcaDocumentAllowanceCharge[];
   lines: ZatcaInvoiceLine[];
 }
 
@@ -137,6 +152,30 @@ function categoryIdFor(vatPercent: number): string {
   return vatPercent > 0 ? "S" : "O";
 }
 
+function assertHalalas(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer halalas (got ${value})`);
+  }
+}
+
+function renderAllowanceCharge(
+  charge: ZatcaDocumentAllowanceCharge,
+  chargeIndicator: boolean,
+): string {
+  assertHalalas(charge.amountHalalas, "allowance/charge amount");
+  return (
+    "    <cac:AllowanceCharge>\n" +
+    `        <cbc:ChargeIndicator>${String(chargeIndicator)}</cbc:ChargeIndicator>\n` +
+    `        <cbc:AllowanceChargeReason>${escapeXml(charge.reason ?? (chargeIndicator ? "shipping" : "discount"))}</cbc:AllowanceChargeReason>\n` +
+    `        <cbc:Amount currencyID="SAR">${formatHalalas(charge.amountHalalas)}</cbc:Amount>\n` +
+    fill(ALLOWANCE_TAX_CATEGORY_TEMPLATE, {
+      SET_CATEGORY_ID: categoryIdFor(charge.vatPercent),
+      SET_CATEGORY_PERCENT: String(charge.vatPercent),
+    }) +
+    "\n    </cac:AllowanceCharge>\n"
+  );
+}
+
 export function buildSimplifiedInvoiceXml(
   props: SimplifiedInvoiceProps,
 ): BuiltSimplifiedInvoice {
@@ -156,12 +195,14 @@ export function buildSimplifiedInvoiceXml(
         `line ${line.id}: unitPriceHalalas must be a non-negative integer (got ${line.unitPriceHalalas})`,
       );
     }
-    if (!Number.isSafeInteger(line.quantity) || line.quantity <= 0) {
+    if (!Number.isFinite(line.quantity) || line.quantity <= 0) {
       throw new Error(
-        `line ${line.id}: quantity must be a positive integer (got ${line.quantity})`,
+        `line ${line.id}: quantity must be a positive number (got ${line.quantity})`,
       );
     }
-    const subtotalHalalas = line.quantity * line.unitPriceHalalas;
+    const subtotalHalalas =
+      line.lineExtensionHalalas ?? Math.round(line.quantity * line.unitPriceHalalas);
+    assertHalalas(subtotalHalalas, `line ${line.id}: lineExtensionHalalas`);
     return {
       line,
       subtotalHalalas,
@@ -169,25 +210,62 @@ export function buildSimplifiedInvoiceXml(
     };
   });
 
-  const taxExclusiveHalalas = lineTotals.reduce((s, l) => s + l.subtotalHalalas, 0);
-  const taxHalalas = lineTotals.reduce((s, l) => s + l.taxHalalas, 0);
-  const taxInclusiveHalalas = taxExclusiveHalalas + taxHalalas;
+  const documentAllowances = props.documentAllowances ?? [];
+  const documentCharges = props.documentCharges ?? [];
+  const allowanceTotalHalalas = documentAllowances.reduce(
+    (sum, allowance) => sum + allowance.amountHalalas,
+    0,
+  );
+  const chargeTotalHalalas = documentCharges.reduce(
+    (sum, charge) => sum + charge.amountHalalas,
+    0,
+  );
+  assertHalalas(allowanceTotalHalalas, "AllowanceTotalAmount");
+  assertHalalas(chargeTotalHalalas, "ChargeTotalAmount");
 
-  // Group lines by (category, percent) for the TaxSubtotal breakdown.
-  const groups = new Map<string, { categoryId: string; vatPercent: number; taxable: number; tax: number }>();
-  for (const { line, subtotalHalalas, taxHalalas: lineTax } of lineTotals) {
-    const categoryId = categoryIdFor(line.vatPercent);
-    const key = `${categoryId}:${line.vatPercent}`;
+  const lineExtensionTotalHalalas = lineTotals.reduce(
+    (s, l) => s + l.subtotalHalalas,
+    0,
+  );
+  const taxExclusiveHalalas =
+    lineExtensionTotalHalalas - allowanceTotalHalalas + chargeTotalHalalas;
+  assertHalalas(taxExclusiveHalalas, "TaxExclusiveAmount");
+
+  // Tax subtotals are grouped by VAT category after document-level allowances
+  // and charges. The line-level TaxTotal remains based on the original line
+  // extension, matching the Strategy-B document allowance representation.
+  const groups = new Map<
+    string,
+    { categoryId: string; vatPercent: number; taxable: number }
+  >();
+  const addTaxable = (vatPercent: number, amountHalalas: number) => {
+    if (amountHalalas === 0) return;
+    const categoryId = categoryIdFor(vatPercent);
+    const key = `${categoryId}:${vatPercent}`;
     const group = groups.get(key) ?? {
       categoryId,
-      vatPercent: line.vatPercent,
+      vatPercent,
       taxable: 0,
-      tax: 0,
     };
-    group.taxable += subtotalHalalas;
-    group.tax += lineTax;
+    group.taxable += amountHalalas;
     groups.set(key, group);
+  };
+
+  for (const { line, subtotalHalalas } of lineTotals) {
+    addTaxable(line.vatPercent, subtotalHalalas);
   }
+  for (const charge of documentCharges) {
+    addTaxable(charge.vatPercent, charge.amountHalalas);
+  }
+  for (const allowance of documentAllowances) {
+    addTaxable(allowance.vatPercent, -allowance.amountHalalas);
+  }
+
+  const taxHalalas = [...groups.values()].reduce(
+    (sum, group) => sum + vatOf(group.taxable, group.vatPercent),
+    0,
+  );
+  const taxInclusiveHalalas = taxExclusiveHalalas + taxHalalas;
 
   const allowanceCategories = lineTotals
     .map(({ line }) =>
@@ -203,12 +281,28 @@ export function buildSimplifiedInvoiceXml(
     .map((group) =>
       fill(TAX_SUBTOTAL_TEMPLATE, {
         SET_TAXABLE_AMOUNT: formatHalalas(group.taxable),
-        SET_SUBTOTAL_TAX_AMOUNT: formatHalalas(group.tax),
+        SET_SUBTOTAL_TAX_AMOUNT: formatHalalas(vatOf(group.taxable, group.vatPercent)),
         SET_CATEGORY_ID: group.categoryId,
         SET_CATEGORY_PERCENT: group.vatPercent.toFixed(2),
       }),
     )
     .join("\n");
+
+  const zeroDiscountAllowance =
+    "    <cac:AllowanceCharge>\n" +
+    "        <cbc:ChargeIndicator>false</cbc:ChargeIndicator>\n" +
+    "        <cbc:AllowanceChargeReason>discount</cbc:AllowanceChargeReason>\n" +
+    "        <cbc:Amount currencyID=\"SAR\">0.00</cbc:Amount>\n" +
+    allowanceCategories +
+    "\n    </cac:AllowanceCharge>\n";
+  const allowanceCharges =
+    (documentAllowances.length
+      ? documentAllowances.map((charge) => renderAllowanceCharge(charge, false)).join("")
+      : zeroDiscountAllowance) +
+    documentCharges.map((charge) => renderAllowanceCharge(charge, true)).join("");
+  const chargeTotal = chargeTotalHalalas
+    ? `        <cbc:ChargeTotalAmount currencyID="SAR">${formatHalalas(chargeTotalHalalas)}</cbc:ChargeTotalAmount>\n`
+    : "";
 
   const invoiceLines = lineTotals
     .map(({ line, subtotalHalalas, taxHalalas: lineTax }) =>
@@ -246,7 +340,7 @@ export function buildSimplifiedInvoiceXml(
   const billingReference = props.billingReference
     ? "    <cac:BillingReference>\n" +
       "        <cac:InvoiceDocumentReference>\n" +
-      `            <cbc:ID>Invoice Number: ${escapeXml(props.billingReference)}</cbc:ID>\n` +
+      `            <cbc:ID>${escapeXml(props.billingReference)}</cbc:ID>\n` +
       "        </cac:InvoiceDocumentReference>\n" +
       "    </cac:BillingReference>\n"
     : "";
@@ -277,12 +371,14 @@ export function buildSimplifiedInvoiceXml(
     SET_BILLING_REFERENCE: billingReference,
     SET_PAYMENT_MEANS_CODE: escapeXml(props.paymentMeansCode ?? "10"),
     SET_INSTRUCTION_NOTE: instructionNote,
-    SET_ALLOWANCE_TAX_CATEGORIES: allowanceCategories,
+    SET_ALLOWANCE_CHARGES: allowanceCharges,
     SET_TAX_TOTAL: formatHalalas(taxHalalas),
     SET_TAX_SUBTOTALS: taxSubtotals,
-    SET_LINE_EXTENSION_TOTAL: formatHalalas(taxExclusiveHalalas),
+    SET_LINE_EXTENSION_TOTAL: formatHalalas(lineExtensionTotalHalalas),
     SET_TAX_EXCLUSIVE_TOTAL: formatHalalas(taxExclusiveHalalas),
     SET_TAX_INCLUSIVE_TOTAL: formatHalalas(taxInclusiveHalalas),
+    SET_ALLOWANCE_TOTAL: formatHalalas(allowanceTotalHalalas),
+    SET_CHARGE_TOTAL: chargeTotal,
     SET_PAYABLE_AMOUNT: formatHalalas(taxInclusiveHalalas),
     SET_INVOICE_LINES: invoiceLines,
   });

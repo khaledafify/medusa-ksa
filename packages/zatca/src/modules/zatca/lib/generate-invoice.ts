@@ -13,6 +13,7 @@ import {
   formatHalalas,
   type SimplifiedInvoiceProps,
 } from "./xml-builder";
+import { assertSimplifiedInvoiceReconciles } from "./tax-base";
 
 /**
  * Generate pipeline (ADR-0004): under the per-EGS chain lock,
@@ -36,6 +37,10 @@ export interface GenerateInvoiceInput
   privateKey: string;
   /** Signing-time override for reproducible tests; defaults to now. */
   signingTime?: string;
+  /** Expected Medusa order total; mismatch fails closed before signing/reporting. */
+  expectedTaxInclusiveHalalas?: number;
+  /** Expected Medusa order VAT total; mismatch fails closed before signing/reporting. */
+  expectedTaxHalalas?: number;
 }
 
 /** Field-for-field shape of a pending `zatca_invoice` row. */
@@ -80,6 +85,8 @@ export async function generatePendingInvoice(
     certificate,
     privateKey,
     signingTime,
+    expectedTaxInclusiveHalalas,
+    expectedTaxHalalas,
     ...invoiceProps
   } = input;
 
@@ -88,6 +95,22 @@ export async function generatePendingInvoice(
 
   const uuid = providedUuid ?? randomUUID();
   const built = buildSimplifiedInvoiceXml({ ...invoiceProps, uuid, icv, pih });
+  if (
+    expectedTaxInclusiveHalalas !== undefined ||
+    expectedTaxHalalas !== undefined
+  ) {
+    assertSimplifiedInvoiceReconciles(
+      {
+        taxInclusiveHalalas: built.taxInclusiveHalalas,
+        taxHalalas: built.taxHalalas,
+      },
+      {
+        expectedTaxInclusiveHalalas:
+          expectedTaxInclusiveHalalas ?? built.taxInclusiveHalalas,
+        expectedTaxHalalas: expectedTaxHalalas ?? built.taxHalalas,
+      },
+    );
+  }
 
   const { signedXml, invoiceHash, digitalSignature } = signInvoice({
     xml: built.xml,
