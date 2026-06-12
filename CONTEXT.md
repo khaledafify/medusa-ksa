@@ -110,6 +110,16 @@ _Avoid_: postal code, zip, address code.
 The order-level flag (`valid` | `unvalidated` | `unchecked`) recording whether the shipping address verified against the National Address. Advisory by default — it surfaces bad addresses without blocking the order.
 _Avoid_: verified flag, address error.
 
+## Notifications
+
+**Sender ID**:
+The alphanumeric originator shown on an SMS. In KSA it must be **pre-registered/approved** with the provider (CITC-regulated) — a message can't use an unregistered sender.
+_Avoid_: from, sender name.
+
+**DLR (delivery report)**:
+The asynchronous status (delivered/failed at the handset) the SMS provider sends back *after* acceptance — distinct from the synchronous send-accept. Deferred in v1.
+_Avoid_: receipt, delivery status (ambiguous).
+
 ## Configuration
 
 **Sandbox**:
