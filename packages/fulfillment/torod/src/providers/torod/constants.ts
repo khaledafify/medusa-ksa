@@ -84,6 +84,8 @@ export const TOROD_ERROR_MESSAGES = {
   COURIER_ID_DUPLICATE: "Torod courier partners response included a duplicate courier id.",
   COURIER_OPTION_MISSING: "Torod courier option data is missing a courier id.",
   CITIES_DATA_MALFORMED: "Torod cities response did not include a data array.",
+  REGIONS_DATA_MALFORMED: "Torod regions response did not include a data array.",
+  REGION_ID_MISSING: "Torod regions response included a region without a usable id.",
   CITY_UNRESOLVABLE: "Torod could not resolve the destination city.",
   RATE_DATA_MALFORMED: "Torod rates response did not include a data array.",
   RATE_NOT_FOUND: "Torod did not return a rate for the selected courier.",
@@ -91,6 +93,18 @@ export const TOROD_ERROR_MESSAGES = {
   WEIGHT_MISSING: "Torod cannot calculate a rate without shipment weight.",
   ORDER_TOTAL_MISSING: "Torod cannot calculate a rate without the cart order total.",
   WAREHOUSE_MISSING: "Torod cannot calculate a rate without a warehouse code.",
+  ORDER_MISSING: "Torod cannot book a shipment without the Medusa order.",
+  BOOKING_ORDER_TOTAL_MISSING: "Torod cannot book a shipment without the order total.",
+  SHIPPING_ADDRESS_MISSING: "Torod cannot book a shipment without a shipping address.",
+  CUSTOMER_NAME_MISSING: "Torod cannot book a shipment without a customer name.",
+  CUSTOMER_EMAIL_MISSING: "Torod cannot book a shipment without a customer email.",
+  CUSTOMER_PHONE_MISSING: "Torod cannot book a shipment without a customer phone number.",
+  SHIPPING_ADDRESS_LINE_MISSING:
+    "Torod cannot book a shipment without a shipping address line.",
+  ORDER_ITEMS_MISSING: "Torod cannot book a shipment without shippable order items.",
+  TOROD_ORDER_ID_MISSING: "Torod order/create response did not include an order id.",
+  TRACKING_ID_MISSING: "Torod ship/process response did not include a tracking id.",
+  LABEL_URL_MISSING: "Torod ship/process response did not include an aws_label URL.",
   BOOKING_NOT_READY: "Torod shipment booking is not available until booking is configured.",
   CANCELLATION_NOT_READY: "Torod shipment cancellation is not available until cancellation is configured.",
   RETURNS_DEFERRED: "Returns are not supported by Torod's public API.",
@@ -145,6 +159,8 @@ export const TOROD_RESPONSE_FIELDS = {
   TITLE: "title",
   TITLE_ARABIC: "title_arabic",
   METHOD: "method",
+  REGION_ID: TOROD_REQUEST_FIELDS.REGION_ID,
+  REGION_NAME: "region_name",
   RATE: "rate",
   COD_FEE: "cod_fee",
   IS_OWN: "is_own",
@@ -199,6 +215,7 @@ export const TOROD_OWN_CARRIER = {
 
 export const DEFAULTS = {
   BASE_URL: TOROD_BASE_URLS.SANDBOX,
+  COUNTRY_ID: 1,
   BOX_COUNT: 1,
   TIMEOUT_MS: 15_000,
   RETRY: {
@@ -227,6 +244,7 @@ export const FULFILLMENT_DATA_KEYS = {
   WAREHOUSE_CODE: "warehouseCode",
   PAYMENT_METHOD: "paymentMethod",
   SHIPMENT_TYPE: "shipmentType",
+  SHIPMENT_WEIGHT: "shipmentWeight",
   RATE: "rate",
   COD_FEE: "codFee",
   IS_OWN: "isOwn",
@@ -235,6 +253,9 @@ export const FULFILLMENT_DATA_KEYS = {
 export const MEDUSA_CONTEXT_FIELDS = {
   TOTAL: "total",
   SUBTOTAL: "subtotal",
+  METADATA: "metadata",
+  WEIGHT: "weight",
+  WEIGHT_KG: "weightKg",
 } as const;
 
 export const TOROD_WEBHOOK_FIELDS = {

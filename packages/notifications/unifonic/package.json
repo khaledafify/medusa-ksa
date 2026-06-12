@@ -1,0 +1,71 @@
+{
+  "name": "medusa-notification-unifonic",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Unifonic SMS notification provider for Medusa v2 (Saudi Arabia).",
+  "license": "MIT",
+  "author": "khaledafify",
+  "bugs": "https://github.com/khaledafify/medusa-ksa/issues",
+  "dependencies": {
+    "@medusa-ksa/core": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@medusajs/admin-shared": "^2.13.0",
+    "@medusajs/cli": "^2.13.0",
+    "@medusajs/framework": "^2.13.0",
+    "@medusajs/medusa": "^2.13.0",
+    "@types/node": "^20.14.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    "./providers/*": "./.medusa/server/src/providers/*/index.js",
+    "./*": "./.medusa/server/src/*.js"
+  },
+  "files": [
+    ".medusa/server",
+    "README.md",
+    "UNIFONIC-API-NOTES.md",
+    "LICENSE"
+  ],
+  "homepage": "https://github.com/khaledafify/medusa-ksa/tree/main/packages/notifications/unifonic#readme",
+  "keywords": [
+    "arabic",
+    "ksa",
+    "medusa-plugin",
+    "medusa-v2",
+    "notification",
+    "saudi",
+    "sms",
+    "unifonic"
+  ],
+  "peerDependencies": {
+    "@medusajs/framework": "^2.13.0",
+    "@medusajs/medusa": "^2.13.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khaledafify/medusa-ksa.git",
+    "directory": "packages/notifications/unifonic"
+  },
+  "scripts": {
+    "build": "medusa plugin:build",
+    "dev": "medusa plugin:develop",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "type": "module"
+}

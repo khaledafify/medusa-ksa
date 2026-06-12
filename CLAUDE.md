@@ -43,8 +43,9 @@ medusa-ksa/
 │   │   ├── spl/                    → medusa-fulfillment-spl     (Saudi Post)
 │   │   └── imile/                  → medusa-fulfillment-imile
 │   ├── notifications/
-│   │   ├── unifonic/               → medusa-notification-unifonic
-│   │   └── taqnyat/                → medusa-notification-taqnyat
+│   │   ├── unifonic/               → medusa-notification-unifonic   (SMS transport)
+│   │   ├── taqnyat/                → medusa-notification-taqnyat    (SMS transport)
+│   │   └── engine/                 → medusa-plugin-notifications    (provider-agnostic order-notification engine: DB Handlebars templates + triggers + admin editor)
 │   ├── zatca/                      → medusa-plugin-zatca        (FLAGSHIP)
 │   ├── address-saudi/              → medusa-plugin-saudi-address
 │   └── create-medusa-ksa-app/      → create-medusa-ksa-app      (scaffolder / install flywheel)
@@ -61,7 +62,7 @@ medusa-ksa/
 - **Backend-only — what we *build and publish*.** Server-side packages: providers, modules, subscribers, workflows, API routes. No storefront code or storefront data ships in this suite (not on the roadmap).
 - **Storefront knowledge is reference-only.** Storefront/checkout best-practices are kept on hand (via skills) for one reason: to design provider/module APIs that fit real storefront checkout flows, and to e2e-test payments in `apps/demo-store`. Understanding the storefront ≠ building one. Don't add storefront packages or commit storefront code to the suite.
 - **Configuration & usage happen through Medusa's *native* admin**, following Medusa admin best practices: payments enabled per region, fulfillment via shipping options, notifications via channels. Don't reinvent these surfaces or add per-package admin widgets.
-- **No custom UI**, with **one** deliberate exception: the **ZATCA admin onboarding wizard** (native Medusa admin extension, required for the OTP/CSID handshake — see §8). Everything else rides native admin.
+- **No custom UI**, with exactly **two** deliberate exceptions (both native admin extensions, never storefront): (1) the **ZATCA admin onboarding wizard** (OTP/CSID handshake — §8); (2) the **notification template editor** in `medusa-plugin-notifications` (the provider-agnostic order-notification engine — DB-stored Handlebars SMS templates edited via self-seed + REST API + admin editor). Everything else rides native admin; any further UI needs explicit sign-off.
 
 ### Dropped / out of scope (do not build)
 - ❌ **Storefront — any storefront-side code or data** (checkout UI, hosted-form wiring, publishable-key flows, RTL storefront). Consumers integrate these in their own app; the suite stays backend + native admin.
@@ -90,15 +91,16 @@ Write the pattern once here; every plugin inherits identical, polished DX. This 
 
 ## 6. How each connector plugs in (the UI decision)
 
-**17 of these need ZERO custom UI** — registering them makes them appear in Medusa's existing admin automatically.
+**Most of these need ZERO custom UI** — registering them makes them appear in Medusa's existing admin automatically. Exactly **two** packages ship a native admin extension (ZATCA wizard, notification template editor).
 
 | Category | Packages | Medusa type | Admin surface | Custom UI |
 |---|---|---|---|:---:|
 | Payments | moyasar, tap, hyperpay, myfatoorah, paytabs, stcpay, tabby, tamara | **Payment provider** | Settings → Regions (auto) | None |
 | Fulfillment | torod, smsa, aramex, spl, imile | **Fulfillment provider** | Settings → Shipping (auto) | None |
-| Notifications | unifonic, taqnyat | **Notification provider** | config-driven (channels) | None |
+| Notification transport | unifonic, taqnyat | **Notification provider** | config-driven (channels) | None |
+| **Order notifications** | **notifications/engine** | **custom module + subscribers + API + admin UI** | Settings → Notifications | **Yes — template editor (2nd justified UI)** |
 | Address | saudi-address | custom service + checkout hook | — | None |
-| **E-invoicing** | **zatca** | **custom module + subscribers/workflows** | Settings → ZATCA | **Yes — onboarding wizard (the only justified UI)** |
+| **E-invoicing** | **zatca** | **custom module + subscribers/workflows** | Settings → ZATCA | **Yes — onboarding wizard (1st justified UI)** |
 
 Key facts:
 - **API keys live in env / `medusa-config.ts`**, not the admin. The admin toggle only enables a registered provider per region. (Don't build key-entry UI.)
@@ -138,7 +140,7 @@ That's a full working checkout.
 3. **Auto-wired webhooks** — the package ships its own webhook route. The user pastes one URL into the provider dashboard; no route code.
 4. **Sane KSA defaults** — `currency: "SAR"`, automatic halalas conversion, sandbox auto-detected from the key prefix (`sk_test_` vs `sk_live_`). No "mode" flag.
 5. **One shared pattern** — all packages configure identically (via core), so learning one teaches all.
-6. **Zero UI, native admin only** — rely on Medusa's native admin; never reinvent it, never add per-package status widgets, never ship storefront code. The sole exception in the whole suite is the ZATCA onboarding wizard (§8).
+6. **Zero UI, native admin only** — rely on Medusa's native admin; never reinvent it, never add per-package status widgets, never ship storefront code. Exactly two sanctioned UI exceptions exist in the whole suite: the ZATCA onboarding wizard (§8) and the notification **template editor** in `medusa-plugin-notifications`. Any further UI needs explicit sign-off.
 
 ## 8. ZATCA (flagship) — summary
 

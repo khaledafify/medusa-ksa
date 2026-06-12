@@ -5,6 +5,7 @@ import { KsaErrorCodes } from "@medusa-ksa/core";
 import {
   DEFAULTS,
   FULFILLMENT_DATA_KEYS,
+  MEDUSA_CONTEXT_FIELDS,
   PROVIDER_ID,
   TOROD_ENDPOINTS,
   TOROD_ERROR_MESSAGES,
@@ -26,14 +27,26 @@ const CONFIG = {
 };
 
 type RateContext = Parameters<TorodFulfillmentProviderService["calculatePrice"]>[2];
+type FulfillmentItemsInput = Parameters<
+  TorodFulfillmentProviderService["createFulfillment"]
+>[1];
+type FulfillmentOrderInput = NonNullable<
+  Parameters<TorodFulfillmentProviderService["createFulfillment"]>[2]
+>;
 
 interface StubTorodFetchOptions {
   couriers?: unknown;
   courierStatus?: number;
+  regions?: unknown;
+  regionStatus?: number;
   cities?: unknown;
   cityStatus?: number;
   rates?: unknown;
   rateStatus?: number;
+  orderCreate?: unknown;
+  orderCreateStatus?: number;
+  shipProcess?: unknown;
+  shipProcessStatus?: number;
 }
 
 function makeService(
@@ -61,9 +74,38 @@ function tokenResponse(token: string) {
   };
 }
 
+function requestBody(init?: RequestInit): Record<string, unknown> {
+  const rawBody = String(init?.body ?? "{}");
+  try {
+    return JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    const params = new URLSearchParams(rawBody);
+    const numericFields = new Set<string>([
+      TOROD_REQUEST_FIELDS.WEIGHT,
+      TOROD_REQUEST_FIELDS.ORDER_TOTAL,
+      TOROD_REQUEST_FIELDS.BOX_COUNT,
+      TOROD_REQUEST_FIELDS.IS_INSURANCE,
+      TOROD_REQUEST_FIELDS.IS_OWN,
+    ]);
+    return Object.fromEntries(
+      Array.from(params.entries()).map(([key, value]) => {
+        if (!numericFields.has(key)) {
+          return [key, value];
+        }
+        const numericValue = Number(value);
+        return [key, Number.isFinite(numericValue) ? numericValue : value];
+      }),
+    );
+  }
+}
+
 function stubTorodFetch(options: StubTorodFetchOptions) {
   const rateBodies: unknown[] = [];
+  const orderCreateBodies: unknown[] = [];
+  const shipProcessBodies: unknown[] = [];
+  const cityQueries: Record<string, string>[] = [];
   const fetchImpl = vi.fn(async (url: unknown, init?: RequestInit) => {
+    const requestUrl = new URL(String(url));
     const path = String(url).replace(DEFAULTS.BASE_URL, "");
     if (path === TOROD_TOKEN.PATH) {
       return jsonResponse(tokenResponse("tok_service"));
@@ -71,18 +113,46 @@ function stubTorodFetch(options: StubTorodFetchOptions) {
     if (path === TOROD_ENDPOINTS.COURIERS) {
       return jsonResponse(options.couriers, options.courierStatus);
     }
+    if (path.startsWith(TOROD_ENDPOINTS.REGIONS)) {
+      return jsonResponse(
+        options.regions ?? {
+          [TOROD_RESPONSE_FIELDS.DATA]: [
+            {
+              [TOROD_RESPONSE_FIELDS.REGION_ID]: "1",
+              [TOROD_RESPONSE_FIELDS.REGION_NAME]: "Riyadh",
+            },
+          ],
+        },
+        options.regionStatus,
+      );
+    }
     if (path.startsWith(TOROD_ENDPOINTS.CITIES)) {
+      cityQueries.push(Object.fromEntries(requestUrl.searchParams.entries()));
       return jsonResponse(options.cities, options.cityStatus);
     }
     if (path === TOROD_ENDPOINTS.RATES) {
-      rateBodies.push(JSON.parse(String(init?.body ?? "{}")));
+      rateBodies.push(requestBody(init));
       return jsonResponse(options.rates, options.rateStatus);
+    }
+    if (path === TOROD_ENDPOINTS.CREATE_ORDER) {
+      orderCreateBodies.push(requestBody(init));
+      return jsonResponse(options.orderCreate, options.orderCreateStatus);
+    }
+    if (path === TOROD_ENDPOINTS.SHIP_PROCESS) {
+      shipProcessBodies.push(requestBody(init));
+      return jsonResponse(options.shipProcess, options.shipProcessStatus);
     }
     return jsonResponse({}, 404);
   }) as unknown as typeof fetch;
 
   vi.stubGlobal("fetch", fetchImpl);
-  return { fetchImpl, rateBodies };
+  return {
+    fetchImpl,
+    rateBodies,
+    orderCreateBodies,
+    shipProcessBodies,
+    cityQueries,
+  };
 }
 
 function rateContext(overrides: Record<string, unknown> = {}): RateContext {
@@ -138,6 +208,58 @@ function optionData(courierCode = "15"): Record<string, unknown> {
     id: optionIdForCourier(courierCode),
     [FULFILLMENT_DATA_KEYS.TOROD_COURIER_CODE]: courierCode,
   };
+}
+
+function fulfillmentItems(): FulfillmentItemsInput {
+  return [
+    {
+      id: "fulitem_test",
+      title: "Arabic Coffee",
+      quantity: 2,
+      line_item_id: "line_test",
+    },
+  ];
+}
+
+function fulfillmentOrder(
+  overrides: Record<string, unknown> = {},
+): FulfillmentOrderInput {
+  return {
+    id: "order_test",
+    display_id: 1001,
+    email: "buyer@example.com",
+    shipping_address: {
+      id: "addr_test",
+      first_name: "Sara",
+      last_name: "Ahmed",
+      phone: "+966500000000",
+      address_1: "King Fahd Road",
+      address_2: "Unit 4",
+      city: "Riyadh",
+      country_code: "sa",
+      created_at: "2026-06-12T00:00:00.000Z",
+      updated_at: "2026-06-12T00:00:00.000Z",
+    },
+    items: [
+      {
+        id: "line_test",
+        title: "Arabic Coffee",
+        quantity: 2,
+        requires_shipping: true,
+        metadata: {
+          [MEDUSA_CONTEXT_FIELDS.WEIGHT_KG]: 0.5,
+        },
+        created_at: "2026-06-12T00:00:00.000Z",
+        updated_at: "2026-06-12T00:00:00.000Z",
+      },
+    ],
+    shipping_methods: [],
+    total: 340,
+    subtotal: 300,
+    created_at: "2026-06-12T00:00:00.000Z",
+    updated_at: "2026-06-12T00:00:00.000Z",
+    ...overrides,
+  } as unknown as FulfillmentOrderInput;
 }
 
 describe("TorodFulfillmentProviderService", () => {
@@ -287,7 +409,7 @@ describe("TorodFulfillmentProviderService", () => {
   });
 
   it("resolves serviceable city metadata during fulfillment data validation", async () => {
-    stubTorodFetch({
+    const { cityQueries } = stubTorodFetch({
       cities: {
         [TOROD_RESPONSE_FIELDS.DATA]: [
           {
@@ -313,6 +435,12 @@ describe("TorodFulfillmentProviderService", () => {
       [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
       [FULFILLMENT_DATA_KEYS.CITY_NAME]: "Riyadh",
     });
+    expect(cityQueries).toEqual([
+      {
+        [TOROD_REQUEST_FIELDS.REGION_ID]: "1",
+        [TOROD_REQUEST_FIELDS.PAGE]: "1",
+      },
+    ]);
   });
 
   it("rejects unserviceable city during fulfillment data validation", async () => {
@@ -338,6 +466,67 @@ describe("TorodFulfillmentProviderService", () => {
     ).rejects.toMatchObject({
       code: KsaErrorCodes.INVALID_INPUT,
       message: expect.stringContaining(TOROD_ERROR_MESSAGES.CITY_UNRESOLVABLE),
+    });
+  });
+
+  it("rejects malformed Torod region data during city validation", async () => {
+    stubTorodFetch({ regions: {} });
+
+    await expect(
+      makeService().validateFulfillmentData(
+        {},
+        {},
+        rateContext() as unknown as Parameters<
+          TorodFulfillmentProviderService["validateFulfillmentData"]
+        >[2],
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.PROVIDER_ERROR,
+      message: expect.stringContaining(
+        TOROD_ERROR_MESSAGES.REGIONS_DATA_MALFORMED,
+      ),
+    });
+  });
+
+  it("rejects Torod region rows without a usable id during city validation", async () => {
+    stubTorodFetch({
+      regions: {
+        [TOROD_RESPONSE_FIELDS.DATA]: [{}],
+      },
+    });
+
+    await expect(
+      makeService().validateFulfillmentData(
+        {},
+        {},
+        rateContext() as unknown as Parameters<
+          TorodFulfillmentProviderService["validateFulfillmentData"]
+        >[2],
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.PROVIDER_ERROR,
+      message: expect.stringContaining(TOROD_ERROR_MESSAGES.REGION_ID_MISSING),
+    });
+  });
+
+  it("rejects non-object Torod region rows during city validation", async () => {
+    stubTorodFetch({
+      regions: {
+        [TOROD_RESPONSE_FIELDS.DATA]: [null],
+      },
+    });
+
+    await expect(
+      makeService().validateFulfillmentData(
+        {},
+        {},
+        rateContext() as unknown as Parameters<
+          TorodFulfillmentProviderService["validateFulfillmentData"]
+        >[2],
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.PROVIDER_ERROR,
+      message: expect.stringContaining(TOROD_ERROR_MESSAGES.REGION_ID_MISSING),
     });
   });
 
@@ -1045,12 +1234,673 @@ describe("TorodFulfillmentProviderService", () => {
     });
   });
 
-  it("fails closed instead of booking a shipment before T3.1", async () => {
+  it("books a Torod fulfillment with the documented two-step flow", async () => {
+    const { orderCreateBodies, shipProcessBodies } = stubTorodFetch({
+      orderCreate: {
+        [TOROD_RESPONSE_FIELDS.DATA]: {
+          [TOROD_RESPONSE_FIELDS.ORDER_ID]: "torod_order_123",
+        },
+      },
+      shipProcess: {
+        [TOROD_RESPONSE_FIELDS.DATA]: {
+          [TOROD_RESPONSE_FIELDS.TRACKING_ID]: "TRK123",
+          [TOROD_RESPONSE_FIELDS.LABEL_URL]:
+            "https://demo.stage.torod.co/en/downloadLabel/4026",
+        },
+      },
+    });
+    const data = {
+      ...optionData("15"),
+      [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+      [FULFILLMENT_DATA_KEYS.CITY_NAME]: "Riyadh",
+      [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+      [FULFILLMENT_DATA_KEYS.BOX_COUNT]: 3,
+      [FULFILLMENT_DATA_KEYS.PAYMENT_METHOD]: TOROD_PAYMENT.COD,
+      [FULFILLMENT_DATA_KEYS.SHIPMENT_TYPE]: TOROD_SHIPMENT_TYPE.COLD,
+      [FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT]: 2.75,
+    };
+
     await expect(
-      makeService().createFulfillment({}, [], undefined, {}),
+      makeService().createFulfillment(
+        data,
+        fulfillmentItems(),
+        fulfillmentOrder(),
+        {},
+      ),
+    ).resolves.toEqual({
+      data: {
+        ...data,
+        [FULFILLMENT_DATA_KEYS.TOROD_ORDER_ID]: "torod_order_123",
+        [FULFILLMENT_DATA_KEYS.TOROD_COURIER_CODE]: "15",
+        [FULFILLMENT_DATA_KEYS.TRACKING_NUMBER]: "TRK123",
+        [FULFILLMENT_DATA_KEYS.LABEL_URL]:
+          "https://demo.stage.torod.co/en/downloadLabel/4026",
+        [FULFILLMENT_DATA_KEYS.BOX_COUNT]: 3,
+        [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+        [FULFILLMENT_DATA_KEYS.PAYMENT_METHOD]: TOROD_PAYMENT.COD,
+        [FULFILLMENT_DATA_KEYS.SHIPMENT_TYPE]: TOROD_SHIPMENT_TYPE.COLD,
+      },
+      labels: [
+        {
+          tracking_number: "TRK123",
+          tracking_url: "https://demo.stage.torod.co/en/downloadLabel/4026",
+          label_url: "https://demo.stage.torod.co/en/downloadLabel/4026",
+        },
+      ],
+    });
+
+    expect(orderCreateBodies).toEqual([
+      {
+        [TOROD_REQUEST_FIELDS.CUSTOMER_NAME]: "Sara Ahmed",
+        [TOROD_REQUEST_FIELDS.CUSTOMER_EMAIL]: "buyer@example.com",
+        [TOROD_REQUEST_FIELDS.CUSTOMER_PHONE]: "+966500000000",
+        [TOROD_REQUEST_FIELDS.ITEM_DESCRIPTION]: "Arabic Coffee",
+        [TOROD_REQUEST_FIELDS.ORDER_TOTAL]: 340,
+        [TOROD_REQUEST_FIELDS.PAYMENT]: TOROD_PAYMENT.COD,
+        [TOROD_REQUEST_FIELDS.WEIGHT]: 2.75,
+        [TOROD_REQUEST_FIELDS.BOX_COUNT]: 3,
+        [TOROD_REQUEST_FIELDS.SHIPMENT_TYPE]: TOROD_SHIPMENT_TYPE.COLD,
+        [TOROD_REQUEST_FIELDS.CITY_ID]: "101",
+        [TOROD_REQUEST_FIELDS.ADDRESS]: "King Fahd Road, Unit 4",
+      },
+    ]);
+    expect(shipProcessBodies).toEqual([
+      {
+        [TOROD_REQUEST_FIELDS.ORDER_ID]: "torod_order_123",
+        [TOROD_REQUEST_FIELDS.WAREHOUSE]: "warehouse_riyadh",
+        [TOROD_REQUEST_FIELDS.SHIPMENT_TYPE]: TOROD_SHIPMENT_TYPE.COLD,
+        [TOROD_REQUEST_FIELDS.COURIER_PARTNER_ID]: "15",
+        [TOROD_REQUEST_FIELDS.IS_OWN]: DEFAULTS.OWN_CARRIER,
+        [TOROD_REQUEST_FIELDS.IS_INSURANCE]: DEFAULTS.INSURANCE,
+      },
+    ]);
+  });
+
+  it("uses shipping method data, configured default box count, and default weight for booking", async () => {
+    const { orderCreateBodies, shipProcessBodies } = stubTorodFetch({
+      orderCreate: {
+        [TOROD_RESPONSE_FIELDS.ORDER_ID]: "torod_order_default",
+      },
+      shipProcess: {
+        [TOROD_RESPONSE_FIELDS.TRACKING_ID]: "TRKDEFAULT",
+        [TOROD_RESPONSE_FIELDS.LABEL_URL]:
+          "https://demo.stage.torod.co/en/downloadLabel/4027",
+      },
+    });
+    const order = fulfillmentOrder({
+      items: [
+        {
+          id: "line_test",
+          title: "Arabic Coffee",
+          quantity: 2,
+          requires_shipping: true,
+          metadata: {},
+          created_at: "2026-06-12T00:00:00.000Z",
+          updated_at: "2026-06-12T00:00:00.000Z",
+        },
+      ],
+      shipping_methods: [
+        {
+          id: "ship_method",
+          order_id: "order_test",
+          name: "Torod SMSA",
+          data: {
+            ...optionData("22"),
+            [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+            [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_from_method",
+          },
+          created_at: "2026-06-12T00:00:00.000Z",
+          updated_at: "2026-06-12T00:00:00.000Z",
+        },
+      ],
+    });
+
+    await expect(
+      makeService({
+        ...CONFIG,
+        defaultBoxCount: 5,
+        defaultWeightKg: 1.25,
+      }).createFulfillment({}, fulfillmentItems(), order, {}),
+    ).resolves.toMatchObject({
+      data: {
+        [FULFILLMENT_DATA_KEYS.TOROD_ORDER_ID]: "torod_order_default",
+        [FULFILLMENT_DATA_KEYS.TOROD_COURIER_CODE]: "22",
+        [FULFILLMENT_DATA_KEYS.TRACKING_NUMBER]: "TRKDEFAULT",
+        [FULFILLMENT_DATA_KEYS.LABEL_URL]:
+          "https://demo.stage.torod.co/en/downloadLabel/4027",
+        [FULFILLMENT_DATA_KEYS.BOX_COUNT]: 5,
+        [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_from_method",
+        [FULFILLMENT_DATA_KEYS.PAYMENT_METHOD]: DEFAULTS.PAYMENT,
+        [FULFILLMENT_DATA_KEYS.SHIPMENT_TYPE]: DEFAULTS.SHIPMENT_TYPE,
+      },
+    });
+
+    expect(orderCreateBodies[0]).toMatchObject({
+      [TOROD_REQUEST_FIELDS.WEIGHT]: 2.5,
+      [TOROD_REQUEST_FIELDS.BOX_COUNT]: 5,
+      [TOROD_REQUEST_FIELDS.PAYMENT]: DEFAULTS.PAYMENT,
+      [TOROD_REQUEST_FIELDS.SHIPMENT_TYPE]: DEFAULTS.SHIPMENT_TYPE,
+    });
+    expect(shipProcessBodies[0]).toMatchObject({
+      [TOROD_REQUEST_FIELDS.COURIER_PARTNER_ID]: "22",
+      [TOROD_REQUEST_FIELDS.WAREHOUSE]: "warehouse_from_method",
+    });
+  });
+
+  it("uses the company name when the shipping address has no personal name", async () => {
+    const { orderCreateBodies } = stubTorodFetch({
+      orderCreate: {
+        [TOROD_RESPONSE_FIELDS.ORDER_ID]: "torod_order_company",
+      },
+      shipProcess: {
+        [TOROD_RESPONSE_FIELDS.TRACKING_ID]: "TRKCOMPANY",
+        [TOROD_RESPONSE_FIELDS.LABEL_URL]:
+          "https://demo.stage.torod.co/en/downloadLabel/4031",
+      },
+    });
+
+    await expect(
+      makeService().createFulfillment(
+        {
+          ...optionData("15"),
+          [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+          [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+          [FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT]: 1,
+        },
+        fulfillmentItems(),
+        fulfillmentOrder({
+          shipping_address: {
+            id: "addr_test",
+            first_name: " ",
+            last_name: " ",
+            company: "Riyadh Trading",
+            phone: "+966500000000",
+            address_1: "King Fahd Road",
+            city: "Riyadh",
+            created_at: "2026-06-12T00:00:00.000Z",
+            updated_at: "2026-06-12T00:00:00.000Z",
+          },
+        }),
+        {},
+      ),
+    ).resolves.toMatchObject({
+      data: {
+        [FULFILLMENT_DATA_KEYS.TRACKING_NUMBER]: "TRKCOMPANY",
+      },
+    });
+
+    expect(orderCreateBodies[0]).toMatchObject({
+      [TOROD_REQUEST_FIELDS.CUSTOMER_NAME]: "Riyadh Trading",
+      [TOROD_REQUEST_FIELDS.ADDRESS]: "King Fahd Road",
+    });
+  });
+
+  it("derives booking weight from fulfillment metadata, order items, and default weight", async () => {
+    const { orderCreateBodies } = stubTorodFetch({
+      orderCreate: {
+        [TOROD_RESPONSE_FIELDS.ORDER_ID]: "torod_order_weight",
+      },
+      shipProcess: {
+        [TOROD_RESPONSE_FIELDS.TRACKING_ID]: "TRKWEIGHT",
+        [TOROD_RESPONSE_FIELDS.LABEL_URL]:
+          "https://demo.stage.torod.co/en/downloadLabel/4030",
+      },
+    });
+    const data = {
+      ...optionData("15"),
+      [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+      [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+    };
+    const service = makeService({
+      ...CONFIG,
+      defaultWeightKg: 0.75,
+    });
+
+    await service.createFulfillment(
+      data,
+      [
+        {
+          title: "Metadata Weighted Item",
+          quantity: 2,
+          metadata: {
+            [MEDUSA_CONTEXT_FIELDS.WEIGHT]: 1.1,
+          },
+        },
+      ] as unknown as FulfillmentItemsInput,
+      fulfillmentOrder({
+        items: [],
+      }),
+      {},
+    );
+
+    await service.createFulfillment(
+      data,
+      [],
+      fulfillmentOrder({
+        items: [
+          {
+            id: "line_default",
+            title: "Order Fallback Item",
+            quantity: 3,
+            requires_shipping: true,
+            metadata: {},
+            created_at: "2026-06-12T00:00:00.000Z",
+            updated_at: "2026-06-12T00:00:00.000Z",
+          },
+        ],
+      }),
+      {},
+    );
+
+    await service.createFulfillment(
+      data,
+      [
+        {
+          title: "No Line Id Item",
+          quantity: 4,
+        },
+      ],
+      fulfillmentOrder({
+        items: [],
+      }),
+      {},
+    );
+
+    expect(orderCreateBodies.map((body) => {
+      if (typeof body !== "object" || body === null) {
+        return undefined;
+      }
+      return (body as Record<string, unknown>)[TOROD_REQUEST_FIELDS.WEIGHT];
+    })).toEqual([2.2, 2.25, 3]);
+  });
+
+  it("resolves the order city before booking when validated city data is absent", async () => {
+    const { orderCreateBodies } = stubTorodFetch({
+      cities: {
+        [TOROD_RESPONSE_FIELDS.DATA]: [
+          {
+            [TOROD_RESPONSE_FIELDS.CITIES_ID]: "101",
+            [TOROD_RESPONSE_FIELDS.CITY_NAME]: "Riyadh",
+          },
+        ],
+      },
+      orderCreate: {
+        [TOROD_RESPONSE_FIELDS.DATA]: {
+          [TOROD_RESPONSE_FIELDS.ORDER_ID]: "torod_order_city",
+        },
+      },
+      shipProcess: {
+        [TOROD_RESPONSE_FIELDS.DATA]: {
+          [TOROD_RESPONSE_FIELDS.TRACKING_ID]: "TRKCITY",
+          [TOROD_RESPONSE_FIELDS.LABEL_URL]:
+            "https://demo.stage.torod.co/en/downloadLabel/4028",
+        },
+      },
+    });
+
+    await expect(
+      makeService().createFulfillment(
+        {
+          ...optionData("15"),
+          [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+          [FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT]: 1,
+        },
+        fulfillmentItems(),
+        fulfillmentOrder(),
+        {},
+      ),
+    ).resolves.toMatchObject({
+      data: {
+        [FULFILLMENT_DATA_KEYS.TRACKING_NUMBER]: "TRKCITY",
+      },
+    });
+
+    expect(orderCreateBodies[0]).toMatchObject({
+      [TOROD_REQUEST_FIELDS.CITY_ID]: "101",
+    });
+  });
+
+  it("fails booking before calling Torod when required order inputs are missing", async () => {
+    const { orderCreateBodies, shipProcessBodies } = stubTorodFetch({});
+    const service = makeService();
+
+    await expect(
+      service.createFulfillment(optionData("15"), fulfillmentItems(), undefined, {}),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(TOROD_ERROR_MESSAGES.ORDER_MISSING),
+    });
+
+    await expect(
+      service.createFulfillment(optionData("15"), fulfillmentItems(), {}, {}),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(
+        TOROD_ERROR_MESSAGES.SHIPPING_ADDRESS_MISSING,
+      ),
+    });
+
+    await expect(
+      service.createFulfillment(
+        {
+          ...optionData("15"),
+          [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+          [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+          [FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT]: 1,
+        },
+        fulfillmentItems(),
+        fulfillmentOrder({
+          email: "   ",
+        }),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(
+        TOROD_ERROR_MESSAGES.CUSTOMER_EMAIL_MISSING,
+      ),
+    });
+
+    await expect(
+      service.createFulfillment(
+        {
+          ...optionData("15"),
+          [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+          [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+          [FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT]: 1,
+        },
+        fulfillmentItems(),
+        fulfillmentOrder({
+          total: undefined,
+          subtotal: undefined,
+        }),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(
+        TOROD_ERROR_MESSAGES.BOOKING_ORDER_TOTAL_MISSING,
+      ),
+    });
+
+    expect(orderCreateBodies).toEqual([]);
+    expect(shipProcessBodies).toEqual([]);
+  });
+
+  it("fails booking when customer address details are incomplete", async () => {
+    const data = {
+      ...optionData("15"),
+      [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+      [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+      [FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT]: 1,
+    };
+    const service = makeService();
+
+    await expect(
+      service.createFulfillment(
+        data,
+        fulfillmentItems(),
+        fulfillmentOrder({
+          shipping_address: {
+            id: "addr_test",
+            first_name: " ",
+            last_name: " ",
+            company: " ",
+            phone: "+966500000000",
+            address_1: "King Fahd Road",
+            city: "Riyadh",
+            created_at: "2026-06-12T00:00:00.000Z",
+            updated_at: "2026-06-12T00:00:00.000Z",
+          },
+        }),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(
+        TOROD_ERROR_MESSAGES.CUSTOMER_NAME_MISSING,
+      ),
+    });
+
+    await expect(
+      service.createFulfillment(
+        data,
+        fulfillmentItems(),
+        fulfillmentOrder({
+          shipping_address: {
+            id: "addr_test",
+            first_name: "Sara",
+            last_name: "Ahmed",
+            phone: " ",
+            address_1: "King Fahd Road",
+            city: "Riyadh",
+            created_at: "2026-06-12T00:00:00.000Z",
+            updated_at: "2026-06-12T00:00:00.000Z",
+          },
+        }),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(
+        TOROD_ERROR_MESSAGES.CUSTOMER_PHONE_MISSING,
+      ),
+    });
+
+    await expect(
+      service.createFulfillment(
+        data,
+        fulfillmentItems(),
+        fulfillmentOrder({
+          shipping_address: {
+            id: "addr_test",
+            first_name: "Sara",
+            last_name: "Ahmed",
+            phone: "+966500000000",
+            address_1: " ",
+            city: "Riyadh",
+            created_at: "2026-06-12T00:00:00.000Z",
+            updated_at: "2026-06-12T00:00:00.000Z",
+          },
+        }),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(
+        TOROD_ERROR_MESSAGES.SHIPPING_ADDRESS_LINE_MISSING,
+      ),
+    });
+  });
+
+  it("fails booking when shipment inputs cannot be derived", async () => {
+    const { orderCreateBodies, shipProcessBodies } = stubTorodFetch({});
+    const service = makeService();
+
+    await expect(
+      service.createFulfillment(
+        {
+          ...optionData("15"),
+          [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+          [FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT]: 1,
+        },
+        fulfillmentItems(),
+        fulfillmentOrder(),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(TOROD_ERROR_MESSAGES.WAREHOUSE_MISSING),
+    });
+
+    await expect(
+      service.createFulfillment(
+        {
+          [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+          [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+          [FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT]: 1,
+        },
+        fulfillmentItems(),
+        fulfillmentOrder(),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(
+        TOROD_ERROR_MESSAGES.COURIER_OPTION_MISSING,
+      ),
+    });
+
+    await expect(
+      service.createFulfillment(
+        {
+          ...optionData("15"),
+          [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+          [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+        },
+        fulfillmentItems(),
+        fulfillmentOrder({
+          items: [
+            {
+              id: "line_test",
+              title: "Arabic Coffee",
+              quantity: 2,
+              requires_shipping: true,
+              metadata: {},
+              created_at: "2026-06-12T00:00:00.000Z",
+              updated_at: "2026-06-12T00:00:00.000Z",
+            },
+          ],
+        }),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(TOROD_ERROR_MESSAGES.WEIGHT_MISSING),
+    });
+
+    expect(orderCreateBodies).toEqual([]);
+    expect(shipProcessBodies).toEqual([]);
+  });
+
+  it("fails booking when there are no shippable order items", async () => {
+    await expect(
+      makeService().createFulfillment(
+        {
+          ...optionData("15"),
+          [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+          [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+        },
+        [],
+        fulfillmentOrder({
+          items: [
+            {
+              id: "line_test",
+              title: "Digital Download",
+              quantity: 1,
+              requires_shipping: false,
+              metadata: {
+                [MEDUSA_CONTEXT_FIELDS.WEIGHT_KG]: 1,
+              },
+              created_at: "2026-06-12T00:00:00.000Z",
+              updated_at: "2026-06-12T00:00:00.000Z",
+            },
+          ],
+        }),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(TOROD_ERROR_MESSAGES.ORDER_ITEMS_MISSING),
+    });
+  });
+
+  it("does not process a shipment when order/create omits the order id", async () => {
+    const { shipProcessBodies } = stubTorodFetch({
+      orderCreate: {
+        [TOROD_RESPONSE_FIELDS.DATA]: {},
+      },
+    });
+
+    await expect(
+      makeService().createFulfillment(
+        {
+          ...optionData("15"),
+          [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+          [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+          [FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT]: 1,
+        },
+        fulfillmentItems(),
+        fulfillmentOrder(),
+        {},
+      ),
     ).rejects.toMatchObject({
       code: KsaErrorCodes.PROVIDER_ERROR,
-      message: expect.stringContaining(TOROD_ERROR_MESSAGES.BOOKING_NOT_READY),
+      message: expect.stringContaining(
+        TOROD_ERROR_MESSAGES.TOROD_ORDER_ID_MISSING,
+      ),
+    });
+
+    expect(shipProcessBodies).toEqual([]);
+  });
+
+  it("fails booking when ship/process omits tracking or label data", async () => {
+    const data = {
+      ...optionData("15"),
+      [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: "warehouse_riyadh",
+      [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+      [FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT]: 1,
+    };
+
+    stubTorodFetch({
+      orderCreate: {
+        [TOROD_RESPONSE_FIELDS.DATA]: {
+          [TOROD_RESPONSE_FIELDS.ORDER_ID]: "torod_order_missing_tracking",
+        },
+      },
+      shipProcess: {
+        [TOROD_RESPONSE_FIELDS.DATA]: {
+          [TOROD_RESPONSE_FIELDS.LABEL_URL]:
+            "https://demo.stage.torod.co/en/downloadLabel/4029",
+        },
+      },
+    });
+
+    await expect(
+      makeService().createFulfillment(
+        data,
+        fulfillmentItems(),
+        fulfillmentOrder(),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.PROVIDER_ERROR,
+      message: expect.stringContaining(TOROD_ERROR_MESSAGES.TRACKING_ID_MISSING),
+    });
+
+    stubTorodFetch({
+      orderCreate: {
+        [TOROD_RESPONSE_FIELDS.DATA]: {
+          [TOROD_RESPONSE_FIELDS.ORDER_ID]: "torod_order_missing_label",
+        },
+      },
+      shipProcess: {
+        [TOROD_RESPONSE_FIELDS.DATA]: {
+          [TOROD_RESPONSE_FIELDS.TRACKING_ID]: "TRKMISSINGLABEL",
+        },
+      },
+    });
+
+    await expect(
+      makeService().createFulfillment(
+        data,
+        fulfillmentItems(),
+        fulfillmentOrder(),
+        {},
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.PROVIDER_ERROR,
+      message: expect.stringContaining(TOROD_ERROR_MESSAGES.LABEL_URL_MISSING),
     });
   });
 

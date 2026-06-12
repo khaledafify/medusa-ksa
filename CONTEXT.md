@@ -120,6 +120,18 @@ _Avoid_: from, sender name.
 The asynchronous status (delivered/failed at the handset) the SMS provider sends back *after* acceptance — distinct from the synchronous send-accept. Deferred in v1.
 _Avoid_: receipt, delivery status (ambiguous).
 
+**Notification template**:
+A stored, editable message body keyed by `(channel, event, locale)` and rendered with Handlebars against order data. Lives in the `medusa-plugin-notifications` engine, not in a transport provider.
+_Avoid_: message, copy, layout.
+
+**Transport provider**:
+A notification **provider** whose only job is to deliver an already-rendered message to one channel (Unifonic/Taqnyat for `sms`). It never decides which events fire or what they say.
+_Avoid_: sender (use Sender ID for the originator), gateway.
+
+**Trigger**:
+A subscriber in the engine that listens to an order-lifecycle event and creates a notification on a channel. The mapping event→template is the engine's; the delivery is the transport provider's.
+_Avoid_: hook, handler (too generic), webhook (reserve for inbound provider callbacks).
+
 ## Configuration
 
 **Sandbox**:

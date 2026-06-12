@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": ".medusa/server",
+    "rootDir": "."
+  },
+  "include": ["src"],
+  "exclude": ["**/*.test.ts", ".medusa", "node_modules", "vitest.config.ts"]
+}

@@ -73,14 +73,15 @@ export class TorodClient {
 
   async request<T>(request: HttpRequest): Promise<T> {
     const token = await this.getBearerToken();
+    const encodedRequest = this.formEncodedRequest(request);
     try {
-      return await this.authedHttp(token).request<T>(request);
+      return await this.authedHttp(token).request<T>(encodedRequest);
     } catch (err) {
       if (!this.isUnauthorized(err)) {
         throw err;
       }
       const refreshed = await this.refreshBearerToken();
-      return await this.authedHttp(refreshed).request<T>(request);
+      return await this.authedHttp(refreshed).request<T>(encodedRequest);
     }
   }
 
@@ -163,6 +164,69 @@ export class TorodClient {
     body.set(TOROD_REQUEST_FIELDS.CLIENT_ID, this.options.clientId);
     body.set(TOROD_REQUEST_FIELDS.CLIENT_SECRET, this.options.clientSecret);
     return body.toString();
+  }
+
+  private formEncodedRequest(request: HttpRequest): HttpRequest {
+    if (
+      request.body === undefined ||
+      typeof request.body === "string" ||
+      !this.isRecord(request.body) ||
+      this.hasContentTypeHeader(request.headers)
+    ) {
+      return request;
+    }
+
+    return {
+      ...request,
+      headers: {
+        ...(request.headers ?? {}),
+        [TOROD_HTTP_HEADERS.CONTENT_TYPE]: TOROD_MEDIA_TYPES.FORM_URLENCODED,
+      },
+      body: this.formEncodedBody(request.body),
+    };
+  }
+
+  private formEncodedBody(value: Record<string, unknown>): string {
+    const body = new URLSearchParams();
+    for (const [key, raw] of Object.entries(value)) {
+      if (raw === undefined) {
+        continue;
+      }
+      body.set(key, this.formEncodedValue(raw));
+    }
+    return body.toString();
+  }
+
+  private formEncodedValue(value: unknown): string {
+    if (typeof value === "string") {
+      return value;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value.toString();
+    }
+    if (typeof value === "boolean") {
+      return value.toString();
+    }
+    throw new KsaError("Torod form request body values must be primitive.", {
+      prefix: TOROD_PREFIX,
+      code: KsaErrorCodes.INVALID_INPUT,
+    });
+  }
+
+  private hasContentTypeHeader(
+    headers: Record<string, string> | undefined,
+  ): boolean {
+    if (headers === undefined) {
+      return false;
+    }
+    const contentTypeHeader = TOROD_HTTP_HEADERS.CONTENT_TYPE.toLowerCase();
+    return Object.keys(headers).some(
+      (header) => header.toLowerCase() === contentTypeHeader,
+    );
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
   private resolveTokenExpiry(response: TorodTokenResponse): number {

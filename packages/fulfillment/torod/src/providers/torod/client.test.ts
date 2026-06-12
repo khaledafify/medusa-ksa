@@ -8,6 +8,7 @@ import {
   TOROD_HTTP_HEADERS,
   TOROD_HTTP_METHOD,
   TOROD_MEDIA_TYPES,
+  TOROD_REQUEST_FIELDS,
   TOROD_RESPONSE_FIELDS,
   TOROD_TOKEN,
 } from "./constants.js";
@@ -96,6 +97,107 @@ describe("TorodClient", () => {
     await client.request({ method: TOROD_HTTP_METHOD.GET, path: TOROD_ENDPOINTS.COURIERS });
 
     expect(capturedAuthorization).toBe(`${TOROD_TOKEN.BEARER_SCHEME} tok_auth`);
+  });
+
+  it("form-encodes authenticated object request bodies for Torod endpoints", async () => {
+    let capturedBody: string | undefined;
+    let capturedContentType: string | undefined;
+    let capturedAuthorization: string | undefined;
+    const fetchImpl = vi.fn(async (url: unknown, init?: RequestInit) => {
+      if (String(url).endsWith(TOROD_ENDPOINTS.TOKEN)) {
+        return jsonResponse(tokenResponse("tok_form_body"));
+      }
+      const headers = init?.headers as Record<string, string>;
+      capturedAuthorization = headers[TOROD_HTTP_HEADERS.AUTHORIZATION];
+      capturedContentType = headers[TOROD_HTTP_HEADERS.CONTENT_TYPE];
+      capturedBody = String(init?.body ?? "");
+      return jsonResponse({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+
+    await client.request({
+      method: TOROD_HTTP_METHOD.POST,
+      path: TOROD_ENDPOINTS.RATES,
+      body: {
+        [TOROD_REQUEST_FIELDS.WAREHOUSE]: "MEDUSAKSA",
+        [TOROD_REQUEST_FIELDS.WEIGHT]: 1.25,
+        [TOROD_REQUEST_FIELDS.IS_INSURANCE]: false,
+        ignored: undefined,
+      },
+    });
+
+    expect(capturedAuthorization).toBe(
+      `${TOROD_TOKEN.BEARER_SCHEME} tok_form_body`,
+    );
+    expect(capturedContentType).toBe(TOROD_MEDIA_TYPES.FORM_URLENCODED);
+    expect(Array.from(new URLSearchParams(capturedBody).entries())).toEqual(
+      [
+        [TOROD_REQUEST_FIELDS.WAREHOUSE, "MEDUSAKSA"],
+        [TOROD_REQUEST_FIELDS.WEIGHT, "1.25"],
+        [TOROD_REQUEST_FIELDS.IS_INSURANCE, "false"],
+      ],
+    );
+  });
+
+  it("preserves explicit authenticated request content types", async () => {
+    let capturedBody: string | undefined;
+    let capturedContentType: string | undefined;
+    const fetchImpl = vi.fn(async (url: unknown, init?: RequestInit) => {
+      if (String(url).endsWith(TOROD_ENDPOINTS.TOKEN)) {
+        return jsonResponse(tokenResponse("tok_preserve_body"));
+      }
+      const headers = init?.headers as Record<string, string>;
+      capturedContentType = headers[TOROD_HTTP_HEADERS.CONTENT_TYPE];
+      capturedBody = String(init?.body ?? "");
+      return jsonResponse({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+
+    await client.request({
+      method: TOROD_HTTP_METHOD.POST,
+      path: TOROD_ENDPOINTS.RATES,
+      headers: {
+        [TOROD_HTTP_HEADERS.CONTENT_TYPE]: TOROD_MEDIA_TYPES.JSON,
+      },
+      body: {
+        [TOROD_REQUEST_FIELDS.WAREHOUSE]: "MEDUSAKSA",
+      },
+    });
+
+    expect(capturedContentType).toBe(TOROD_MEDIA_TYPES.JSON);
+    expect(capturedBody).toBe(
+      JSON.stringify({
+        [TOROD_REQUEST_FIELDS.WAREHOUSE]: "MEDUSAKSA",
+      }),
+    );
+  });
+
+  it("rejects non-primitive authenticated form body values before sending", async () => {
+    let nonTokenCallCount = 0;
+    const fetchImpl = vi.fn(async (url: unknown) => {
+      if (String(url).endsWith(TOROD_ENDPOINTS.TOKEN)) {
+        return jsonResponse(tokenResponse("tok_invalid_body"));
+      }
+      nonTokenCallCount += 1;
+      return jsonResponse({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+
+    await expect(
+      client.request({
+        method: TOROD_HTTP_METHOD.POST,
+        path: TOROD_ENDPOINTS.RATES,
+        body: {
+          [TOROD_REQUEST_FIELDS.WAREHOUSE]: {
+            nested: "value",
+          },
+        },
+      }),
+    ).rejects.toSatisfy((err) => KsaError.isKsaError(err));
+    expect(nonTokenCallCount).toBe(0);
   });
 
   it("uses default client options when optional configuration is omitted", async () => {

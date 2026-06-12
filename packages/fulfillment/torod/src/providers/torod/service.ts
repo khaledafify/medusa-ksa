@@ -33,15 +33,36 @@ import { resolveTorodOptions } from "./options.js";
 import type { TorodOptions } from "./options.js";
 
 interface TorodCourierPartnersResponse {
+  [key: string]: unknown;
   [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
 }
 
 interface TorodCitiesResponse {
+  [key: string]: unknown;
+  [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
+}
+
+interface TorodRegionsResponse {
+  [key: string]: unknown;
   [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
 }
 
 interface TorodRatesResponse {
+  [key: string]: unknown;
   [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
+}
+
+interface TorodCreateOrderResponse {
+  [key: string]: unknown;
+  [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
+  [TOROD_RESPONSE_FIELDS.ORDER_ID]?: unknown;
+}
+
+interface TorodShipProcessResponse {
+  [key: string]: unknown;
+  [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
+  [TOROD_RESPONSE_FIELDS.TRACKING_ID]?: unknown;
+  [TOROD_RESPONSE_FIELDS.LABEL_URL]?: unknown;
 }
 
 interface TorodResolvedCity {
@@ -53,6 +74,10 @@ type TorodCityContext = Pick<
   CalculateShippingOptionPriceDTO["context"],
   "shipping_address"
 >;
+
+type TorodFulfillmentItem = Partial<Omit<FulfillmentItemDTO, "fulfillment">>;
+type TorodOrderLineItem = NonNullable<FulfillmentOrderDTO["items"]>[number];
+type TorodOrderAddress = NonNullable<FulfillmentOrderDTO["shipping_address"]>;
 
 /**
  * Medusa v2 Fulfillment provider for the Torod courier aggregator.
@@ -176,17 +201,78 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
   /**
    * Medusa order-fulfillment booking contract.
    *
-   * T3.1 replaces this guard with Torod's two-step booking flow.
+   * Return type is `CreateFulfillmentResult`; Torod books in two steps:
+   * order/create, then ship/process.
    */
-  override createFulfillment(
-    _data: Record<string, unknown>,
-    _items: Partial<Omit<FulfillmentItemDTO, "fulfillment">>[],
-    _order: Partial<FulfillmentOrderDTO> | undefined,
+  override async createFulfillment(
+    data: Record<string, unknown>,
+    items: TorodFulfillmentItem[],
+    order: Partial<FulfillmentOrderDTO> | undefined,
     _fulfillment: Partial<Omit<FulfillmentDTO, "provider_id" | "data" | "items">>,
   ): Promise<CreateFulfillmentResult> {
-    return Promise.reject(
-      this.providerError(TOROD_ERROR_MESSAGES.BOOKING_NOT_READY),
-    );
+    try {
+      const bookingData = this.bookingData(data, order);
+      const requiredOrder = this.requiredOrder(order);
+      this.bookingAddress(requiredOrder);
+      const shipmentType =
+        this.stringField(bookingData, FULFILLMENT_DATA_KEYS.SHIPMENT_TYPE) ??
+        DEFAULTS.SHIPMENT_TYPE;
+      const warehouse = this.bookingWarehouseCode(bookingData);
+      const payment =
+        this.stringField(bookingData, FULFILLMENT_DATA_KEYS.PAYMENT_METHOD) ??
+        DEFAULTS.PAYMENT;
+      const boxCount = this.boxCount(bookingData);
+      const courierCode = this.selectedCourierCode(bookingData);
+      const createOrderBody = await this.createOrderRequest(
+        bookingData,
+        items,
+        requiredOrder,
+      );
+      const orderResponse = await this.client_.request<TorodCreateOrderResponse>({
+        method: TOROD_HTTP_METHOD.POST,
+        path: TOROD_ENDPOINTS.CREATE_ORDER,
+        body: createOrderBody,
+      });
+      const torodOrderId = this.orderIdFromResponse(orderResponse);
+      const shipResponse = await this.client_.request<TorodShipProcessResponse>({
+        method: TOROD_HTTP_METHOD.POST,
+        path: TOROD_ENDPOINTS.SHIP_PROCESS,
+        body: {
+          [TOROD_REQUEST_FIELDS.ORDER_ID]: torodOrderId,
+          [TOROD_REQUEST_FIELDS.WAREHOUSE]: warehouse,
+          [TOROD_REQUEST_FIELDS.SHIPMENT_TYPE]: shipmentType,
+          [TOROD_REQUEST_FIELDS.COURIER_PARTNER_ID]: courierCode,
+          [TOROD_REQUEST_FIELDS.IS_OWN]: DEFAULTS.OWN_CARRIER,
+          [TOROD_REQUEST_FIELDS.IS_INSURANCE]: DEFAULTS.INSURANCE,
+        },
+      });
+      const trackingNumber = this.trackingIdFromResponse(shipResponse);
+      const labelUrl = this.labelUrlFromResponse(shipResponse);
+      const resultData = {
+        ...bookingData,
+        [FULFILLMENT_DATA_KEYS.TOROD_ORDER_ID]: torodOrderId,
+        [FULFILLMENT_DATA_KEYS.TOROD_COURIER_CODE]: courierCode,
+        [FULFILLMENT_DATA_KEYS.TRACKING_NUMBER]: trackingNumber,
+        [FULFILLMENT_DATA_KEYS.LABEL_URL]: labelUrl,
+        [FULFILLMENT_DATA_KEYS.BOX_COUNT]: boxCount,
+        [FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE]: warehouse,
+        [FULFILLMENT_DATA_KEYS.PAYMENT_METHOD]: payment,
+        [FULFILLMENT_DATA_KEYS.SHIPMENT_TYPE]: shipmentType,
+      };
+
+      return {
+        data: resultData,
+        labels: [
+          {
+            tracking_number: trackingNumber,
+            tracking_url: labelUrl,
+            label_url: labelUrl,
+          },
+        ],
+      };
+    } catch (err) {
+      throw toMedusaError(err);
+    }
   }
 
   /**
@@ -290,6 +376,302 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     };
   }
 
+  private async createOrderRequest(
+    data: Record<string, unknown>,
+    items: TorodFulfillmentItem[],
+    order: Partial<FulfillmentOrderDTO> | undefined,
+  ): Promise<Record<string, string | number>> {
+    const requiredOrder = this.requiredOrder(order);
+    const address = this.bookingAddress(requiredOrder);
+    const city = await this.customerCity(data, {
+      shipping_address: address,
+    });
+    const shipmentType =
+      this.stringField(data, FULFILLMENT_DATA_KEYS.SHIPMENT_TYPE) ??
+      DEFAULTS.SHIPMENT_TYPE;
+
+    return {
+      [TOROD_REQUEST_FIELDS.CUSTOMER_NAME]: this.customerName(address),
+      [TOROD_REQUEST_FIELDS.CUSTOMER_EMAIL]: this.customerEmail(requiredOrder),
+      [TOROD_REQUEST_FIELDS.CUSTOMER_PHONE]: this.customerPhone(address),
+      [TOROD_REQUEST_FIELDS.ITEM_DESCRIPTION]: this.itemDescription(
+        items,
+        requiredOrder,
+      ),
+      [TOROD_REQUEST_FIELDS.ORDER_TOTAL]: this.bookingOrderTotal(requiredOrder),
+      [TOROD_REQUEST_FIELDS.PAYMENT]:
+        this.stringField(data, FULFILLMENT_DATA_KEYS.PAYMENT_METHOD) ??
+        DEFAULTS.PAYMENT,
+      [TOROD_REQUEST_FIELDS.WEIGHT]: this.bookingShipmentWeight(
+        data,
+        items,
+        requiredOrder,
+      ),
+      [TOROD_REQUEST_FIELDS.BOX_COUNT]: this.boxCount(data),
+      [TOROD_REQUEST_FIELDS.SHIPMENT_TYPE]: shipmentType,
+      [TOROD_REQUEST_FIELDS.CITY_ID]: city.cityId,
+      [TOROD_REQUEST_FIELDS.ADDRESS]: this.customerAddress(address),
+    };
+  }
+
+  private bookingData(
+    data: Record<string, unknown>,
+    order: Partial<FulfillmentOrderDTO> | undefined,
+  ): Record<string, unknown> {
+    const methodData = this.orderShippingMethodData(order);
+    return {
+      ...methodData,
+      ...data,
+    };
+  }
+
+  private orderShippingMethodData(
+    order: Partial<FulfillmentOrderDTO> | undefined,
+  ): Record<string, unknown> {
+    const methods = order?.shipping_methods ?? [];
+    const matchingMethod = methods.find((method) => {
+      const data = method.data;
+      return data !== undefined && this.courierCodeFromData(data) !== undefined;
+    });
+    const fallbackMethod = matchingMethod ?? methods.find((method) => method.data);
+    return fallbackMethod?.data ?? {};
+  }
+
+  private requiredOrder(
+    order: Partial<FulfillmentOrderDTO> | undefined,
+  ): Partial<FulfillmentOrderDTO> {
+    if (order === undefined) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.ORDER_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    return order;
+  }
+
+  private bookingAddress(order: Partial<FulfillmentOrderDTO>): TorodOrderAddress {
+    if (order.shipping_address === undefined) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.SHIPPING_ADDRESS_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    return order.shipping_address;
+  }
+
+  private customerName(address: TorodOrderAddress): string {
+    const parts = [
+      this.stringFieldFromUnknown(address.first_name),
+      this.stringFieldFromUnknown(address.last_name),
+    ].filter((part) => part !== undefined);
+    const name = parts.join(" ");
+    if (name.length > 0) {
+      return name;
+    }
+
+    const company = this.stringFieldFromUnknown(address.company);
+    if (company !== undefined) {
+      return company;
+    }
+
+    throw this.providerError(
+      TOROD_ERROR_MESSAGES.CUSTOMER_NAME_MISSING,
+      KsaErrorCodes.INVALID_INPUT,
+    );
+  }
+
+  private customerEmail(order: Partial<FulfillmentOrderDTO>): string {
+    const email = this.stringFieldFromUnknown(order.email);
+    if (email === undefined) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.CUSTOMER_EMAIL_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    return email;
+  }
+
+  private customerPhone(address: TorodOrderAddress): string {
+    const phone = this.stringFieldFromUnknown(address.phone);
+    if (phone === undefined) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.CUSTOMER_PHONE_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    return phone;
+  }
+
+  private customerAddress(address: TorodOrderAddress): string {
+    const primary = this.stringFieldFromUnknown(address.address_1);
+    if (primary === undefined) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.SHIPPING_ADDRESS_LINE_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    const secondary = this.stringFieldFromUnknown(address.address_2);
+    return secondary === undefined ? primary : [primary, secondary].join(", ");
+  }
+
+  private itemDescription(
+    fulfillmentItems: TorodFulfillmentItem[],
+    order: Partial<FulfillmentOrderDTO>,
+  ): string {
+    const titleSource =
+      fulfillmentItems.length > 0
+        ? fulfillmentItems
+        : (order.items ?? []).filter((item) => item.requires_shipping !== false);
+    const titles = titleSource
+      .map((item) => this.stringFieldFromUnknown(item.title))
+      .filter((title) => title !== undefined);
+    if (titles.length === 0) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.ORDER_ITEMS_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    return titles.join(", ");
+  }
+
+  private bookingOrderTotal(order: Partial<FulfillmentOrderDTO>): number {
+    const record = order as Record<string, unknown>;
+    const total =
+      this.positiveNumber(record[MEDUSA_CONTEXT_FIELDS.TOTAL]) ??
+      this.positiveNumber(record[MEDUSA_CONTEXT_FIELDS.SUBTOTAL]);
+    if (total === undefined) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.BOOKING_ORDER_TOTAL_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    return total;
+  }
+
+  private bookingShipmentWeight(
+    data: Record<string, unknown>,
+    fulfillmentItems: TorodFulfillmentItem[],
+    order: Partial<FulfillmentOrderDTO>,
+  ): number {
+    const explicitWeight = this.positiveNumber(
+      data[FULFILLMENT_DATA_KEYS.SHIPMENT_WEIGHT],
+    );
+    if (explicitWeight !== undefined) {
+      return explicitWeight;
+    }
+
+    const items =
+      fulfillmentItems.length > 0
+        ? fulfillmentItems
+        : (order.items ?? []).filter((item) => item.requires_shipping !== false);
+
+    let total = 0;
+    for (const item of items) {
+      const quantity = this.positiveNumber(item.quantity);
+      const itemWeight = this.fulfillmentItemWeight(item, order);
+      if (quantity === undefined || itemWeight === undefined) {
+        throw this.providerError(
+          TOROD_ERROR_MESSAGES.WEIGHT_MISSING,
+          KsaErrorCodes.INVALID_INPUT,
+        );
+      }
+      total += quantity * itemWeight;
+    }
+
+    return total;
+  }
+
+  private fulfillmentItemWeight(
+    item: TorodFulfillmentItem | TorodOrderLineItem,
+    order: Partial<FulfillmentOrderDTO>,
+  ): number | undefined {
+    const itemMetadataWeight = this.metadataWeight(
+      (item as Record<string, unknown>)[MEDUSA_CONTEXT_FIELDS.METADATA],
+    );
+    if (itemMetadataWeight !== undefined) {
+      return itemMetadataWeight;
+    }
+
+    const matchingOrderItem = this.matchingOrderItem(item, order);
+    const orderMetadataWeight = this.metadataWeight(matchingOrderItem?.metadata);
+    return orderMetadataWeight ?? this.options_.defaultWeightKg;
+  }
+
+  private matchingOrderItem(
+    item: TorodFulfillmentItem | TorodOrderLineItem,
+    order: Partial<FulfillmentOrderDTO>,
+  ): TorodOrderLineItem | undefined {
+    const lineItemId =
+      "line_item_id" in item && typeof item.line_item_id === "string"
+        ? item.line_item_id
+        : "id" in item && typeof item.id === "string"
+          ? item.id
+          : undefined;
+    if (lineItemId === undefined) {
+      return undefined;
+    }
+    return order.items?.find((orderItem) => orderItem.id === lineItemId);
+  }
+
+  private metadataWeight(metadata: unknown): number | undefined {
+    if (!this.isRecord(metadata)) {
+      return undefined;
+    }
+    return (
+      this.positiveNumber(metadata[MEDUSA_CONTEXT_FIELDS.WEIGHT_KG]) ??
+      this.positiveNumber(metadata[MEDUSA_CONTEXT_FIELDS.WEIGHT])
+    );
+  }
+
+  private bookingWarehouseCode(data: Record<string, unknown>): string {
+    const warehouse = this.stringField(data, FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE);
+    if (warehouse === undefined) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.WAREHOUSE_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    return warehouse;
+  }
+
+  private orderIdFromResponse(response: TorodCreateOrderResponse): string {
+    const orderId =
+      this.stringField(response, TOROD_RESPONSE_FIELDS.ORDER_ID) ??
+      this.responseDataString(response, TOROD_RESPONSE_FIELDS.ORDER_ID);
+    if (orderId === undefined) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.TOROD_ORDER_ID_MISSING);
+    }
+    return orderId;
+  }
+
+  private trackingIdFromResponse(response: TorodShipProcessResponse): string {
+    const trackingId =
+      this.stringField(response, TOROD_RESPONSE_FIELDS.TRACKING_ID) ??
+      this.responseDataString(response, TOROD_RESPONSE_FIELDS.TRACKING_ID);
+    if (trackingId === undefined) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.TRACKING_ID_MISSING);
+    }
+    return trackingId;
+  }
+
+  private labelUrlFromResponse(response: TorodShipProcessResponse): string {
+    const labelUrl =
+      this.stringField(response, TOROD_RESPONSE_FIELDS.LABEL_URL) ??
+      this.responseDataString(response, TOROD_RESPONSE_FIELDS.LABEL_URL);
+    if (labelUrl === undefined) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.LABEL_URL_MISSING);
+    }
+    return labelUrl;
+  }
+
+  private responseDataString(
+    response: { [TOROD_RESPONSE_FIELDS.DATA]?: unknown },
+    field: string,
+  ): string | undefined {
+    const data = response[TOROD_RESPONSE_FIELDS.DATA];
+    return this.isRecord(data) ? this.stringField(data, field) : undefined;
+  }
+
   private selectedCourierRate(response: TorodRatesResponse, courierCode: string): number {
     const ratesValue = response[TOROD_RESPONSE_FIELDS.DATA];
     if (!Array.isArray(ratesValue)) {
@@ -336,20 +718,60 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     }
 
     const cityName = this.shippingCity(context);
-    const response = await this.client_.request<TorodCitiesResponse>({
+    const regionIds = await this.regionIds();
+    for (const regionId of regionIds) {
+      const response = await this.client_.request<TorodCitiesResponse>({
+        method: TOROD_HTTP_METHOD.GET,
+        path: TOROD_ENDPOINTS.CITIES,
+        query: {
+          [TOROD_REQUEST_FIELDS.REGION_ID]: regionId,
+          [TOROD_REQUEST_FIELDS.PAGE]: 1,
+        },
+      });
+      const city = this.cityFromResponse(response, cityName);
+      if (city !== undefined) {
+        return city;
+      }
+    }
+
+    throw this.providerError(
+      TOROD_ERROR_MESSAGES.CITY_UNRESOLVABLE,
+      KsaErrorCodes.INVALID_INPUT,
+    );
+  }
+
+  private async regionIds(): Promise<string[]> {
+    const response = await this.client_.request<TorodRegionsResponse>({
       method: TOROD_HTTP_METHOD.GET,
-      path: TOROD_ENDPOINTS.CITIES,
+      path: TOROD_ENDPOINTS.REGIONS,
       query: {
+        [TOROD_REQUEST_FIELDS.COUNTRY_ID]: DEFAULTS.COUNTRY_ID,
         [TOROD_REQUEST_FIELDS.PAGE]: 1,
       },
     });
-    return this.cityFromResponse(response, cityName);
+    const regions = response[TOROD_RESPONSE_FIELDS.DATA];
+    if (!Array.isArray(regions)) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.REGIONS_DATA_MALFORMED);
+    }
+
+    return regions.map((region) => {
+      if (!this.isRecord(region)) {
+        throw this.providerError(TOROD_ERROR_MESSAGES.REGION_ID_MISSING);
+      }
+      const regionId =
+        this.stringField(region, TOROD_RESPONSE_FIELDS.REGION_ID) ??
+        this.stringField(region, TOROD_RESPONSE_FIELDS.ID);
+      if (regionId === undefined) {
+        throw this.providerError(TOROD_ERROR_MESSAGES.REGION_ID_MISSING);
+      }
+      return regionId;
+    });
   }
 
   private cityFromResponse(
     response: TorodCitiesResponse,
     cityName: string,
-  ): TorodResolvedCity {
+  ): TorodResolvedCity | undefined {
     const citiesValue = response[TOROD_RESPONSE_FIELDS.DATA];
     if (!Array.isArray(citiesValue)) {
       throw this.providerError(TOROD_ERROR_MESSAGES.CITIES_DATA_MALFORMED);
@@ -361,10 +783,7 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
       this.cityMatches(candidate, normalizedCity),
     );
     if (!this.isRecord(city)) {
-      throw this.providerError(
-        TOROD_ERROR_MESSAGES.CITY_UNRESOLVABLE,
-        KsaErrorCodes.INVALID_INPUT,
-      );
+      return undefined;
     }
 
     const cityId =
@@ -544,7 +963,10 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     record: Record<string, unknown>,
     key: string,
   ): string | undefined {
-    const value = record[key];
+    return this.stringFieldFromUnknown(record[key]);
+  }
+
+  private stringFieldFromUnknown(value: unknown): string | undefined {
     if (typeof value === "number" && Number.isFinite(value)) {
       return String(value);
     }
