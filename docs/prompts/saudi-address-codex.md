@@ -11,15 +11,16 @@
 ---
 
 ## OPERATING RULES
-1. **Executor, not designer.** Decisions are in the PRD + ADRs (0001,0002,0003,0010,0011,0012). Do not choose alternatives or "improve."
+1. **Executor, not designer.** Decisions are in the PRD + ADRs (0001,0002,0003,0010,0011,0012,0013). Do not choose alternatives or "improve."
 2. **Verify Medusa types** (custom module, models/migrations, workflow hook, `/store` routes) via `building-with-medusa` / MedusaDocs MCP + installed `@medusajs/*`. The **dataset path needs no external API verification** (it ships the data). Only the **optional SPL adapter (S6)** verifies against api.address.gov.sa.
 3. **STOP and report** if: a gate stays red after 2 attempts, the GPL dependency can't be added cleanly, the SPL docs (S6) contradict the PRD, or a task needs a decision.
 4. **No fabrication** — no fake dataset rows / SPL fields / tests / status; no stubbed shipped paths.
 5. **License (ADR-0012):** the GPL-2.0 geography data is a **separate dependency**; **NEVER** copy GPL data files into the plugin's MIT `src/`. Preserve attribution; document it in the README.
+5b. **Drop-in (ADR-0013):** everything lives **inside the plugin** — models, migrations, **data seeding**, routes, the hook. The host app's only footprint is the npm dep + one `plugins:[]` block + env. The plugin **self-seeds via its own migration/loader** on `db:migrate`/startup — **NEVER** add a seed/setup script to `apps/demo-store` or the consumer's app, and never edit the app's source beyond its one config block.
 6. Commits clean, imperative, **no `Co-Authored-By`, no AI mention**. Never commit `.claude/ .cursor/ .codex/ .agents/ AGENTS.md .mcp.json node_modules .medusa dist` or any secret.
 
 ## READ FIRST
-- `docs/prds/saudi-address.md` · `docs/adr/0001,0002,0003,0010,0011,0012`
+- `docs/prds/saudi-address.md` · `docs/adr/0001,0002,0003,0010,0011,0012,0013`
 - `packages/core/CONTRACT.md` + `packages/core/src/*.ts`
 - `CLAUDE.md` · `CONTEXT.md` (Addresses glossary)
 - `packages/payments/moyasar/**` (quality bar) · `packages/zatca/**` (module-with-migrations reference)
@@ -51,7 +52,7 @@ Exit only when FINAL ACCEPTANCE is all true, or a hard STOP fires. Never fake a 
 
 # TASKS (in order; each = Procedure A+B+C)
 
-- [ ] **S1 — Module + GPL data dependency + seed.** Scaffold `packages/address-saudi` (package.json `medusa-plugin-saudi-address`, dual tsconfig, vitest, `.env.example`); add the **GPL-2.0 geography data as a separate dependency** (do NOT vendor into `src/`); `region`/`city`/`district` models; a migration that **seeds the dataset** from the dependency; module wiring; `createLoader` (API key **optional**). *Accept:* boots with **no key**; migration seeds ≈ 13/4,580/3,730; README records the GPL license + attribution; constants.ts exists.
+- [ ] **S1 — Module + GPL data dependency + seed.** Scaffold `packages/address-saudi` (package.json `medusa-plugin-saudi-address`, dual tsconfig, vitest, `.env.example`); add the **GPL-2.0 geography data as a separate dependency** (do NOT vendor into `src/`); `region`/`city`/`district` models; a **migration/loader inside the plugin that self-seeds** the dataset on `db:migrate`/startup (NO app-level seed script — ADR-0013); module wiring; `createLoader` (API key **optional**). *Accept:* boots with **no key**; `db:migrate` **auto-seeds** ≈ 13/4,580/3,730 with the demo-store footprint being one config block + env only; README records the GPL license + attribution; constants.ts exists.
 - [ ] **S2 — Geography listing.** `regions` / `cities(byRegion)` / `districts(byCity)` from the DB, **Riyadh-first then locale-aware alphabetical**, ar+en. *Accept (tests):* zero network; Riyadh first then alphabetical per locale; both names present.
 - [ ] **S3 — Search + structural validation.** `search` (free-text over the dataset) + `validate` (city/district exist & consistent). *Accept (tests):* offline matches; `valid` for a real consistent pair, `unvalidated` for a bad/mismatched one.
 - [ ] **S4 — `/store` endpoints.** `regions`, `cities`, `districts`, `search`, `validate` (publishable-key authed, Zod-validated); `resolve` registered but returns "enable SPL adapter" until S6. *Accept:* bilingual dataset data; no secret in responses.

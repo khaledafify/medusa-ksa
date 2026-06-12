@@ -1,7 +1,7 @@
 # PRD — `medusa-plugin-saudi-address` (Saudi National Address, dataset-first)
 
 **Status:** ready for implementation · **Owner:** Codex/Cursor (implements) · **Design:** locked via grill-with-docs (Opus)
-**Authority:** `CLAUDE.md` · `docs/adr/0001`,`0002`,`0003`,`0010`,`0011`,`0012` · `packages/core/CONTRACT.md` · `CONTEXT.md` (Addresses glossary) · `packages/payments/moyasar/**` (quality bar) · `packages/zatca/**` (module-with-migrations reference)
+**Authority:** `CLAUDE.md` · `docs/adr/0001`,`0002`,`0003`,`0010`,`0011`,`0012`,`0013` · `packages/core/CONTRACT.md` · `CONTEXT.md` (Addresses glossary) · `packages/payments/moyasar/**` (quality bar) · `packages/zatca/**` (module-with-migrations reference)
 **Path:** `packages/address-saudi` → npm `medusa-plugin-saudi-address`. Built **after** Torod; **independent** of it (ADR-0003).
 
 > A **custom module** that serves Saudi geography + address validation **from a bundled offline dataset** (default, no network) with an **optional SPL adapter** for short-address resolution + official verification. Backend-only, no custom UI.
@@ -38,8 +38,8 @@ For the SPL adapter (S6): auth/version (v3.1/v4), the short-address-resolve + ve
 
 ## 6. Slices (each: test-first, small clean commits, gates green before advancing)
 
-- **S1 — Module + data dependency + seed.** Package (`medusa-plugin-saudi-address`, `medusa plugin:build`, exports per §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*` + the GPL data dependency), dual tsconfig + vitest, `.env.example`. Geography models; migration that **seeds regions/cities/districts from the GPL dependency**; module wiring; `createLoader` (API key **optional**).
-  *Accept:* boots **without any key**; migration seeds the dataset; counts ≈ 13 / 4,580 / 3,730; README records the GPL data license + attribution.
+- **S1 — Module + data dependency + seed.** Package (`medusa-plugin-saudi-address`, `medusa plugin:build`, exports per §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*` + the GPL data dependency), dual tsconfig + vitest, `.env.example`. Geography models; **a migration/loader inside the plugin that self-seeds** regions/cities/districts from the GPL dependency on `db:migrate`/startup; module wiring; `createLoader` (API key **optional**). **Drop-in (ADR-0013): the host app's only footprint is the npm dep + one `plugins:[]` block + env — the plugin self-seeds/self-migrates; NEVER add a seed/setup script to `apps/demo-store` or the consumer's app.**
+  *Accept:* boots **without any key**; `db:migrate` **auto-seeds** the dataset (no app-level script) ≈ 13 / 4,580 / 3,730; the demo-store footprint is one config block + env only; README records the GPL data license + attribution.
 - **S2 — Geography service + listing.** `regions` / `cities(byRegion)` / `districts(byCity)` from the DB, **Riyadh-first then locale-aware alphabetical**, ar+en.
   *Accept (tests):* regions/cities/districts return **with zero network**; Riyadh first then alphabetical per locale; both names present.
 - **S3 — Search + structural validation.** `search` (free-text over the dataset) + `validate` (city/district exist & mutually consistent).
