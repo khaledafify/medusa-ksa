@@ -38,7 +38,7 @@ import {
 import ZatcaCredential from "./models/zatca-credential";
 import ZatcaInvoice from "./models/zatca-invoice";
 import { validateZatcaOptions } from "./loaders/validate-config";
-import type { ZatcaModuleOptions } from "./types";
+import type { ZatcaModuleOptions, ZatcaTrigger } from "./types";
 import type { ZatcaSupplier } from "./lib/xml-builder";
 
 /** Org details collected by the wizard (PRD §1.6) — everything non-secret. */
@@ -61,6 +61,31 @@ interface ZatcaEntityManager {
 export interface ZatcaOnboardingStatus {
   status: "not_onboarded" | "compliance" | "production";
   environment: string;
+  configuration: {
+    trigger: ZatcaTrigger;
+    encryption: "configured";
+    reporting_window_hours: 24;
+    scope: "b2c_simplified_reporting";
+  };
+  readiness: {
+    bootstrap: true;
+    compliance_identity: boolean;
+    production_identity: boolean;
+    signing_identity: boolean;
+    supplier_profile: boolean;
+  };
+  lifecycle: {
+    invoices: true;
+    refunds: true;
+    returns: true;
+    cancellations: true;
+    order_edits: true;
+    credit_notes: true;
+    debit_notes: true;
+    reporting: true;
+    clearance: false;
+    single_egs: true;
+  };
   vat_number?: string;
   org_name?: string;
   egs_serial_number?: string;
@@ -148,11 +173,40 @@ class ZatcaModuleService extends MedusaService({
 
   async getOnboardingStatus(): Promise<ZatcaOnboardingStatus> {
     const row = await this.credentialRow();
+    const base = {
+      environment: this.options.environment,
+      configuration: {
+        trigger: this.options.trigger,
+        encryption: "configured" as const,
+        reporting_window_hours: 24 as const,
+        scope: "b2c_simplified_reporting" as const,
+      },
+      readiness: {
+        bootstrap: true as const,
+        compliance_identity: Boolean(row?.compliance_csid),
+        production_identity: Boolean(row?.production_csid),
+        signing_identity: Boolean(row?.private_key && row?.certificate),
+        supplier_profile: Boolean(row?.supplier),
+      },
+      lifecycle: {
+        invoices: true as const,
+        refunds: true as const,
+        returns: true as const,
+        cancellations: true as const,
+        order_edits: true as const,
+        credit_notes: true as const,
+        debit_notes: true as const,
+        reporting: true as const,
+        clearance: false as const,
+        single_egs: true as const,
+      },
+    };
     if (!row) {
-      return { status: "not_onboarded", environment: this.options.environment };
+      return { status: "not_onboarded", ...base };
     }
     return {
       status: row.status,
+      ...base,
       environment: row.environment,
       vat_number: row.vat_number,
       org_name: row.org_name,

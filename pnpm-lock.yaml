@@ -61,7 +61,7 @@ importers:
         version: 2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0)
       '@medusajs/medusa':
         specifier: ^2.13.0
-        version: 2.15.5(@medusajs/admin-sdk@2.15.5)(@medusajs/cli@2.15.5(@types/node@20.19.42))(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0))(@medusajs/icons@2.15.5(react@18.3.1))(@medusajs/test-utils@2.15.5)(@medusajs/ui@4.1.15(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@swc/core@1.15.41(@swc/helpers@0.5.23))(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(awilix@8.0.1)(picomatch@4.0.4)(posthog-node@5.36.12(rxjs@7.8.2))(react-dom@18.3.1(react@18.3.1))(react-router-dom@6.30.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(typescript@5.9.3)
+        version: 2.15.5(@medusajs/admin-sdk@2.15.5)(@medusajs/cli@2.15.5(@types/node@20.19.42))(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0))(@medusajs/icons@2.15.5(react@18.3.1))(@medusajs/test-utils@2.15.5)(@medusajs/ui@4.1.15(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@swc/core@1.15.41(@swc/helpers@0.5.23))(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(awilix@8.0.1)(picomatch@4.0.4)(posthog-node@5.36.12(rxjs@7.8.2))(react-dom@18.3.1(react@18.3.1))(react-router-dom@6.30.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(yaml@2.9.0)
       awilix:
         specifier: ^8.0.1
         version: 8.0.1
@@ -80,6 +80,9 @@ importers:
       react-dom:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@swc/core':
         specifier: ^1.7.28
@@ -6349,6 +6352,11 @@ packages:
   yallist@4.0.0:
     resolution: {integrity: sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==}
 
+  yaml@2.9.0:
+    resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@18.1.3:
     resolution: {integrity: sha512-o50j0JeToy/4K6OZcaQmW6lyXXKhq7csREXcDwk2omFPJEwUNOVtJKvmDr9EI1fAJZUyZcRF7kxGBWmRXudrCQ==}
     engines: {node: '>=6'}
@@ -7442,7 +7450,7 @@ snapshots:
       globby: 11.1.0
       read-yaml-file: 1.1.0
 
-  '@medusajs/admin-bundler@2.15.5(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(picomatch@4.0.4)(typescript@5.9.3)':
+  '@medusajs/admin-bundler@2.15.5(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(picomatch@4.0.4)(typescript@5.9.3)(yaml@2.9.0)':
     dependencies:
       '@medusajs/admin-shared': 2.15.5
       '@medusajs/admin-vite-plugin': 2.15.5(picomatch@4.0.4)(vite@5.4.21(@types/node@20.19.42))
@@ -7455,7 +7463,7 @@ snapshots:
       glob: 13.0.6
       outdent: 0.8.0
       postcss: 8.5.15
-      tailwindcss: 3.4.19
+      tailwindcss: 3.4.19(yaml@2.9.0)
       vite: 5.4.21(@types/node@20.19.42)
     transitivePeerDependencies:
       - '@emotion/is-prop-valid'
@@ -7490,7 +7498,7 @@ snapshots:
       glob: 13.0.6
       outdent: 0.8.0
       postcss: 8.5.15
-      tailwindcss: 3.4.19
+      tailwindcss: 3.4.19(yaml@2.9.0)
       vite: 5.4.21(@types/node@25.9.2)
     transitivePeerDependencies:
       - '@emotion/is-prop-valid'
@@ -8449,7 +8457,7 @@ snapshots:
       '@inquirer/checkbox': 2.5.0
       '@inquirer/confirm': 2.0.17
       '@inquirer/input': 2.3.0
-      '@medusajs/admin-bundler': 2.15.5(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(picomatch@4.0.4)(typescript@5.9.3)
+      '@medusajs/admin-bundler': 2.15.5(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(picomatch@4.0.4)(typescript@5.9.3)(yaml@2.9.0)
       '@medusajs/analytics': 2.15.5(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@3.25.76))
       '@medusajs/analytics-local': 2.15.5(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@3.25.76))
       '@medusajs/analytics-posthog': 2.15.5(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@3.25.76))(posthog-node@5.36.12(rxjs@7.8.2))
@@ -8548,12 +8556,12 @@ snapshots:
       - typescript
       - yaml
 
-  '@medusajs/medusa@2.15.5(@medusajs/admin-sdk@2.15.5)(@medusajs/cli@2.15.5(@types/node@20.19.42))(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0))(@medusajs/icons@2.15.5(react@18.3.1))(@medusajs/test-utils@2.15.5)(@medusajs/ui@4.1.15(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@swc/core@1.15.41(@swc/helpers@0.5.23))(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(awilix@8.0.1)(picomatch@4.0.4)(posthog-node@5.36.12(rxjs@7.8.2))(react-dom@18.3.1(react@18.3.1))(react-router-dom@6.30.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(typescript@5.9.3)':
+  '@medusajs/medusa@2.15.5(@medusajs/admin-sdk@2.15.5)(@medusajs/cli@2.15.5(@types/node@20.19.42))(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0))(@medusajs/icons@2.15.5(react@18.3.1))(@medusajs/test-utils@2.15.5)(@medusajs/ui@4.1.15(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@swc/core@1.15.41(@swc/helpers@0.5.23))(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(awilix@8.0.1)(picomatch@4.0.4)(posthog-node@5.36.12(rxjs@7.8.2))(react-dom@18.3.1(react@18.3.1))(react-router-dom@6.30.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(yaml@2.9.0)':
     dependencies:
       '@inquirer/checkbox': 2.5.0
       '@inquirer/confirm': 2.0.17
       '@inquirer/input': 2.3.0
-      '@medusajs/admin-bundler': 2.15.5(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(picomatch@4.0.4)(typescript@5.9.3)
+      '@medusajs/admin-bundler': 2.15.5(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(picomatch@4.0.4)(typescript@5.9.3)(yaml@2.9.0)
       '@medusajs/analytics': 2.15.5(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0))
       '@medusajs/analytics-local': 2.15.5(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0))
       '@medusajs/analytics-posthog': 2.15.5(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0))(posthog-node@5.36.12(rxjs@7.8.2))
@@ -9106,7 +9114,7 @@ snapshots:
       ulid: 2.4.0
     optionalDependencies:
       '@medusajs/core-flows': 2.15.5(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0))
-      '@medusajs/medusa': 2.15.5(@medusajs/admin-sdk@2.15.5)(@medusajs/cli@2.15.5(@types/node@20.19.42))(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0))(@medusajs/icons@2.15.5(react@18.3.1))(@medusajs/test-utils@2.15.5)(@medusajs/ui@4.1.15(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@swc/core@1.15.41(@swc/helpers@0.5.23))(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(awilix@8.0.1)(picomatch@4.0.4)(posthog-node@5.36.12(rxjs@7.8.2))(react-dom@18.3.1(react@18.3.1))(react-router-dom@6.30.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(typescript@5.9.3)
+      '@medusajs/medusa': 2.15.5(@medusajs/admin-sdk@2.15.5)(@medusajs/cli@2.15.5(@types/node@20.19.42))(@medusajs/framework@2.15.5(@medusajs/cli@2.15.5(@types/node@20.19.42))(@types/node@20.19.42)(ioredis@5.11.1)(vite@5.4.21(@types/node@20.19.42))(zod@4.2.0))(@medusajs/icons@2.15.5(react@18.3.1))(@medusajs/test-utils@2.15.5)(@medusajs/ui@4.1.15(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(@swc/core@1.15.41(@swc/helpers@0.5.23))(@types/node@20.19.42)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(awilix@8.0.1)(picomatch@4.0.4)(posthog-node@5.36.12(rxjs@7.8.2))(react-dom@18.3.1(react@18.3.1))(react-router-dom@6.30.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(yaml@2.9.0)
     transitivePeerDependencies:
       - debug
       - supports-color
@@ -13587,12 +13595,13 @@ snapshots:
       camelcase-css: 2.0.1
       postcss: 8.5.15
 
-  postcss-load-config@6.0.1(jiti@1.21.7)(postcss@8.5.15):
+  postcss-load-config@6.0.1(jiti@1.21.7)(postcss@8.5.15)(yaml@2.9.0):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
       jiti: 1.21.7
       postcss: 8.5.15
+      yaml: 2.9.0
 
   postcss-nested@6.2.0(postcss@8.5.15):
     dependencies:
@@ -14300,7 +14309,7 @@ snapshots:
 
   tailwind-merge@2.6.1: {}
 
-  tailwindcss@3.4.19:
+  tailwindcss@3.4.19(yaml@2.9.0):
     dependencies:
       '@alloc/quick-lru': 5.2.0
       arg: 5.0.2
@@ -14319,7 +14328,7 @@ snapshots:
       postcss: 8.5.15
       postcss-import: 15.1.0(postcss@8.5.15)
       postcss-js: 4.1.0(postcss@8.5.15)
-      postcss-load-config: 6.0.1(jiti@1.21.7)(postcss@8.5.15)
+      postcss-load-config: 6.0.1(jiti@1.21.7)(postcss@8.5.15)(yaml@2.9.0)
       postcss-nested: 6.2.0(postcss@8.5.15)
       postcss-selector-parser: 6.1.2
       resolve: 1.22.12
@@ -14799,6 +14808,8 @@ snapshots:
   yallist@3.1.1: {}
 
   yallist@4.0.0: {}
+
+  yaml@2.9.0: {}
 
   yargs-parser@18.1.3:
     dependencies:

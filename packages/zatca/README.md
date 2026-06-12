@@ -4,7 +4,7 @@ ZATCA / Fatoora Phase 2 e-invoicing for Medusa v2, built for Saudi B2C commerce.
 
 This package is a Medusa custom module that generates tax-correct Simplified UBL 2.1 invoices, signs them with the onboarded EGS Production CSID, stamps the 9-tag TLV QR code, maintains the ICV/PIH hash chain, and reports invoices plus lifecycle credit/debit notes to ZATCA.
 
-Status: Beta. The B2C Simplified Reporting path is implemented. Simulation certification is still pending, so this is not marked stable yet.
+Status: 🚧 Beta. The full B2C Simplified lifecycle is implemented and validated against the ZATCA **sandbox**: onboarding, tax-correct invoice reporting, and credit/debit notes for refunds, returns, cancellations, and post-issuance order edits (a live sandbox lifecycle gate covers invoices and every note type end-to-end). It is **not** marked Stable — **simulation-environment certification is still pending** and is required before production use (see the Go-Live Checklist below).
 
 ## Scope
 

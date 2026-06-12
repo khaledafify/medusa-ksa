@@ -1,5 +1,16 @@
 import { defineRouteConfig } from "@medusajs/admin-sdk";
 import {
+  ArrowPathMini,
+  CheckCircle,
+  Clock,
+  CreditCardRefresh,
+  DocumentText,
+  ExclamationCircle,
+  ListCheckbox,
+  ReceiptPercent,
+  ShieldCheck,
+} from "@medusajs/icons";
+import {
   Badge,
   Button,
   Container,
@@ -21,15 +32,39 @@ import {
 } from "../../../../modules/zatca/lib/lifecycle";
 
 /**
- * Settings → ZATCA — the suite's one custom UI (CLAUDE.md §6): status
- * banner, onboarding wizard over the backend routes, and a reporting
- * dashboard. Shows status only; no credential field ever reaches this page
- * (the routes can't leak them — ADR-0004).
+ * Settings -> ZATCA is the suite's one custom admin UI: operational status,
+ * safe setup metadata, onboarding, and lifecycle remediation. It never asks
+ * for or displays generated ZATCA credentials.
  */
 
 interface ZatcaStatus {
   status: "not_onboarded" | "compliance" | "production";
   environment: string;
+  configuration: {
+    trigger: "payment_captured" | "order_placed";
+    encryption: "configured";
+    reporting_window_hours: 24;
+    scope: "b2c_simplified_reporting";
+  };
+  readiness: {
+    bootstrap: true;
+    compliance_identity: boolean;
+    production_identity: boolean;
+    signing_identity: boolean;
+    supplier_profile: boolean;
+  };
+  lifecycle: {
+    invoices: true;
+    refunds: true;
+    returns: true;
+    cancellations: true;
+    order_edits: true;
+    credit_notes: true;
+    debit_notes: true;
+    reporting: true;
+    clearance: false;
+    single_egs: true;
+  };
   vat_number?: string;
   org_name?: string;
   egs_serial_number?: string;
@@ -54,7 +89,7 @@ type RemediationDocumentType =
 type TerminalStatus = (typeof TERMINAL_STATUS)[keyof typeof TERMINAL_STATUS];
 
 const REMEDIATION_DOCUMENT_TYPE_LABEL: Record<RemediationDocumentType, string> = {
-  [REMEDIATION_DOCUMENT_TYPE.INVOICE]: ZATCA_DOCUMENT_TYPE.INVOICE,
+  [REMEDIATION_DOCUMENT_TYPE.INVOICE]: "invoice",
   [REMEDIATION_DOCUMENT_TYPE.CREDIT_NOTE]: "credit note",
   [REMEDIATION_DOCUMENT_TYPE.DEBIT_NOTE]: "debit note",
 };
@@ -90,6 +125,7 @@ interface ZatcaRemediation {
     (typeof REMEDIATION_ACTION)[keyof typeof REMEDIATION_ACTION];
   action_label: string;
   message: string;
+  icv_consumed: true;
   mutates_order: false;
 }
 
@@ -101,11 +137,28 @@ interface RetryResult {
 
 const STATUS_BADGE: Record<
   ZatcaStatus["status"],
-  { color: "green" | "orange" | "red"; label: string }
+  { color: "green" | "orange" | "red"; label: string; description: string }
 > = {
-  production: { color: "green", label: "Production — reporting live" },
-  compliance: { color: "orange", label: "Compliance — finish onboarding" },
-  not_onboarded: { color: "red", label: "Not onboarded" },
+  production: {
+    color: "green",
+    label: "Production",
+    description: "Reporting is live for B2C Simplified documents.",
+  },
+  compliance: {
+    color: "orange",
+    label: "Compliance",
+    description: "Finish onboarding before legal documents can be reported.",
+  },
+  not_onboarded: {
+    color: "red",
+    label: "Not onboarded",
+    description: "Run the Fatoora onboarding flow before issuing documents.",
+  },
+};
+
+const TRIGGER_LABEL: Record<ZatcaStatus["configuration"]["trigger"], string> = {
+  payment_captured: "Payment captured",
+  order_placed: "Order placed",
 };
 
 interface FormState {
@@ -142,36 +195,166 @@ const EMPTY_FORM: FormState = {
   otp: "",
 };
 
-const FIELDS: {
-  key: keyof FormState;
+const FIELD_META: Record<
+  Exclude<keyof FormState, "otp">,
+  { label: string; placeholder: string }
+> = {
+  organizationName: {
+    label: "Organization name",
+    placeholder: "Maximum Speed Tech Supply LTD",
+  },
+  vatNumber: { label: "VAT number", placeholder: "399999999900003" },
+  crn: { label: "Commercial registration", placeholder: "1010010000" },
+  branchName: { label: "Branch name", placeholder: "Riyadh Branch" },
+  industry: { label: "Industry", placeholder: "Retail" },
+  serialNumber: { label: "EGS serial number", placeholder: "egs-pos-1" },
+  commonName: {
+    label: "EGS common name",
+    placeholder: "TST-886431145-399999999900003",
+  },
+  address: { label: "Short address code", placeholder: "RRRD2929" },
+  street: { label: "Street", placeholder: "Prince Sultan" },
+  building: { label: "Building number", placeholder: "2322" },
+  citySubdivision: { label: "District", placeholder: "Al-Murabba" },
+  city: { label: "City", placeholder: "Riyadh" },
+  postalZone: { label: "Postal code", placeholder: "23333" },
+};
+
+const FIELD_GROUPS: {
+  title: string;
+  description: string;
+  fields: Exclude<keyof FormState, "otp">[];
+}[] = [
+  {
+    title: "Seller profile",
+    description: "Legal identity used in every UBL supplier party.",
+    fields: [
+      "organizationName",
+      "vatNumber",
+      "crn",
+      "branchName",
+      "industry",
+    ],
+  },
+  {
+    title: "EGS unit",
+    description: "Device identity used for the Fatoora onboarding handshake.",
+    fields: ["serialNumber", "commonName"],
+  },
+  {
+    title: "National address",
+    description: "Structured Saudi address stamped into issued documents.",
+    fields: [
+      "address",
+      "street",
+      "building",
+      "citySubdivision",
+      "city",
+      "postalZone",
+    ],
+  },
+];
+
+const REQUIRED_FIELD_COUNT = Object.keys(EMPTY_FORM).length;
+
+function formatCount(value: number | undefined): string {
+  return value == null ? "-" : new Intl.NumberFormat().format(value);
+}
+
+function formatSourceType(value: string): string {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function readinessColor(ready: boolean): "green" | "orange" {
+  return ready ? "green" : "orange";
+}
+
+function SectionHeading({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: React.ElementType;
+  title: string;
+  description: string;
+}): React.JSX.Element {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-ui-border-base bg-ui-bg-subtle">
+        <Icon className="text-ui-fg-subtle" />
+      </div>
+      <div className="flex min-w-0 flex-col gap-y-1">
+        <Text size="small" leading="compact" weight="plus">
+          {title}
+        </Text>
+        <Text size="small" leading="compact" className="text-ui-fg-subtle">
+          {description}
+        </Text>
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  id,
+  label,
+  placeholder,
+  value,
+  onChange,
+  autoComplete,
+}: {
+  id: string;
   label: string;
   placeholder: string;
-}[] = [
-  { key: "organizationName", label: "Organization name", placeholder: "Maximum Speed Tech Supply LTD" },
-  { key: "vatNumber", label: "VAT number", placeholder: "399999999900003" },
-  { key: "crn", label: "Commercial registration (CRN)", placeholder: "1010010000" },
-  { key: "branchName", label: "Branch name", placeholder: "Riyadh Branch" },
-  { key: "industry", label: "Industry", placeholder: "Retail" },
-  { key: "serialNumber", label: "EGS serial number", placeholder: "egs-pos-1" },
-  { key: "commonName", label: "EGS common name", placeholder: "TST-886431145-399999999900003" },
-  { key: "address", label: "Short address code", placeholder: "RRRD2929" },
-  { key: "street", label: "Street", placeholder: "Prince Sultan" },
-  { key: "building", label: "Building number", placeholder: "2322" },
-  { key: "citySubdivision", label: "District", placeholder: "Al-Murabba" },
-  { key: "city", label: "City", placeholder: "Riyadh" },
-  { key: "postalZone", label: "Postal code", placeholder: "23333" },
-];
+  value: string;
+  onChange: (value: string) => void;
+  autoComplete?: string;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-y-1">
+      <Label size="small" weight="plus" htmlFor={id}>
+        {label}
+      </Label>
+      <Input
+        id={id}
+        size="small"
+        placeholder={placeholder}
+        value={value}
+        autoComplete={autoComplete}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
+  );
+}
+
+function LoadingText(): React.JSX.Element {
+  return (
+    <Text size="small" leading="compact" className="text-ui-fg-subtle">
+      Loading...
+    </Text>
+  );
+}
 
 const ZatcaSettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
-  const { data: status, isPending: statusLoading } = useQuery({
+  const {
+    data: status,
+    isPending: statusLoading,
+    error: statusError,
+  } = useQuery({
     queryKey: ["zatca-status"],
     queryFn: () => sdk.client.fetch<ZatcaStatus>("/admin/zatca/status"),
   });
 
-  const { data: summary } = useQuery({
+  const {
+    data: summary,
+    isPending: summaryLoading,
+    error: summaryError,
+  } = useQuery({
     queryKey: ["zatca-invoice-summary"],
     queryFn: () => sdk.client.fetch<ZatcaSummary>("/admin/zatca/invoices"),
   });
@@ -203,7 +386,8 @@ const ZatcaSettingsPage = (): React.JSX.Element => {
         },
       }),
     onSuccess: () => {
-      toast.success("EGS onboarded — ZATCA reporting is live");
+      toast.success("EGS onboarded. ZATCA reporting is live.");
+      setForm(EMPTY_FORM);
       void queryClient.invalidateQueries({ queryKey: ["zatca-status"] });
     },
     onError: (error: Error) => {
@@ -243,174 +427,470 @@ const ZatcaSettingsPage = (): React.JSX.Element => {
   });
 
   const badge = status ? STATUS_BADGE[status.status] : undefined;
-  const formComplete = (Object.values(form) as string[]).every(
+  const completedFields = (Object.values(form) as string[]).filter(
     (value) => value.trim().length > 0,
-  );
+  ).length;
+  const formComplete = completedFields === REQUIRED_FIELD_COUNT;
+  const reportedPercent =
+    summary && summary.total > 0
+      ? Math.round((summary.reported / summary.total) * 100)
+      : 0;
+
+  const readinessItems = status
+    ? [
+        {
+          label: "Bootstrap config",
+          description:
+            "The module booted with a valid environment, trigger, and encrypted storage.",
+          ready:
+            status.readiness.bootstrap &&
+            status.configuration.encryption === "configured",
+        },
+        {
+          label: "Compliance identity",
+          description: "Fatoora accepted the generated EGS identity for checks.",
+          ready: status.readiness.compliance_identity,
+        },
+        {
+          label: "Production identity",
+          description: "The EGS identity can report legal Simplified documents.",
+          ready: status.readiness.production_identity,
+        },
+        {
+          label: "Signing material",
+          description: "The module can sign UBL documents before reporting.",
+          ready: status.readiness.signing_identity,
+        },
+        {
+          label: "Supplier profile",
+          description: "Seller VAT, CRN, and address are stored for UBL output.",
+          ready: status.readiness.supplier_profile,
+        },
+      ]
+    : [];
+
+  const lifecycleRows = status
+    ? [
+        {
+          label: "Original sale",
+          document: "Invoice 388",
+          enabled: status.lifecycle.invoices,
+          detail:
+            status.configuration.trigger === "payment_captured"
+              ? "Issued when payment is captured."
+              : "Issued when the order is placed, useful for COD and authorize-only stores.",
+        },
+        {
+          label: "Refund",
+          document: "Credit note 381",
+          enabled: status.lifecycle.refunds && status.lifecycle.credit_notes,
+          detail:
+            "One credit note per refund source, idempotent by lifecycle source.",
+        },
+        {
+          label: "Return received",
+          document: "Credit note 381",
+          enabled: status.lifecycle.returns && status.lifecycle.credit_notes,
+          detail:
+            "Credits returned quantities against the original issued lines.",
+        },
+        {
+          label: "Cancellation",
+          document: "Credit note 381",
+          enabled: status.lifecycle.cancellations && status.lifecycle.credit_notes,
+          detail:
+            "Full credit note only after the original invoice has been reported.",
+        },
+        {
+          label: "Order edit",
+          document: "Credit or debit note",
+          enabled:
+            status.lifecycle.order_edits &&
+            status.lifecycle.credit_notes &&
+            status.lifecycle.debit_notes,
+          detail:
+            "Post-issuance decreases become 381; increases become 383.",
+        },
+        {
+          label: "B2B Clearance",
+          document: "Future scope",
+          enabled: status.lifecycle.clearance,
+          detail:
+            "This release is B2C Simplified Reporting only; Clearance remains disabled.",
+        },
+      ]
+    : [];
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-y-3">
       <Container className="divide-y p-0">
-        <div className="flex items-center justify-between px-6 py-4">
-          <div>
+        <div className="flex flex-col gap-4 px-6 py-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 flex-col gap-y-1">
             <Heading level="h2">ZATCA e-invoicing</Heading>
             <Text size="small" leading="compact" className="text-ui-fg-subtle">
-              Fatoora Phase 2 — B2C Simplified invoices, reported within 24h
+              B2C Simplified Reporting for Saudi invoices, credit notes, and debit notes.
             </Text>
           </div>
           {statusLoading || !badge ? (
-            <Text size="small" className="text-ui-fg-subtle">
-              Loading…
-            </Text>
+            <LoadingText />
           ) : (
-            <StatusBadge color={badge.color}>{badge.label}</StatusBadge>
+            <div className="flex flex-col items-start gap-y-1 lg:items-end">
+              <StatusBadge color={badge.color}>{badge.label}</StatusBadge>
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                {badge.description}
+              </Text>
+            </div>
           )}
         </div>
-        {status && status.status !== "not_onboarded" && (
-          <div className="flex flex-wrap gap-x-8 gap-y-2 px-6 py-4">
-            <div>
+
+        {(statusError || summaryError) && (
+          <div className="flex items-start gap-3 px-6 py-4">
+            <ExclamationCircle className="mt-0.5 shrink-0 text-ui-fg-error" />
+            <div className="flex flex-col gap-y-1">
               <Text size="small" leading="compact" weight="plus">
-                Environment
-              </Text>
-              <Badge size="2xsmall">{status.environment}</Badge>
-            </div>
-            <div>
-              <Text size="small" leading="compact" weight="plus">
-                Organization
+                Admin data could not be loaded
               </Text>
               <Text size="small" leading="compact" className="text-ui-fg-subtle">
-                {status.org_name ?? "—"}
-              </Text>
-            </div>
-            <div>
-              <Text size="small" leading="compact" weight="plus">
-                VAT number
-              </Text>
-              <Text size="small" leading="compact" className="text-ui-fg-subtle">
-                {status.vat_number ?? "—"}
-              </Text>
-            </div>
-            <div>
-              <Text size="small" leading="compact" weight="plus">
-                EGS serial
-              </Text>
-              <Text size="small" leading="compact" className="text-ui-fg-subtle">
-                {status.egs_serial_number ?? "—"}
+                {(statusError ?? summaryError)?.message ??
+                  "Check the ZATCA admin routes and server logs."}
               </Text>
             </div>
           </div>
         )}
+
+        <div className="grid grid-cols-1 gap-4 px-6 py-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="flex flex-col gap-y-1">
+            <Text size="small" leading="compact" className="text-ui-fg-subtle">
+              Environment
+            </Text>
+            {status ? (
+              <div className="flex items-center gap-2">
+                <Text size="small" leading="compact" weight="plus">
+                  {status.environment}
+                </Text>
+                <Badge size="2xsmall">{status.status}</Badge>
+              </div>
+            ) : (
+              <LoadingText />
+            )}
+          </div>
+          <div className="flex flex-col gap-y-1">
+            <Text size="small" leading="compact" className="text-ui-fg-subtle">
+              Issuance trigger
+            </Text>
+            <Text size="small" leading="compact" weight="plus">
+              {status ? TRIGGER_LABEL[status.configuration.trigger] : "-"}
+            </Text>
+          </div>
+          <div className="flex flex-col gap-y-1">
+            <Text size="small" leading="compact" className="text-ui-fg-subtle">
+              Reporting window
+            </Text>
+            <Text size="small" leading="compact" weight="plus">
+              {status ? `${status.configuration.reporting_window_hours} hours` : "-"}
+            </Text>
+          </div>
+          <div className="flex flex-col gap-y-1">
+            <Text size="small" leading="compact" className="text-ui-fg-subtle">
+              Scope
+            </Text>
+            <Text size="small" leading="compact" weight="plus">
+              B2C Simplified, single EGS
+            </Text>
+          </div>
+        </div>
+      </Container>
+
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
+        <Container className="divide-y p-0">
+          <div className="px-6 py-4">
+            <SectionHeading
+              icon={ShieldCheck}
+              title="Readiness"
+              description="What must be ready before the module can sign and report legal documents."
+            />
+          </div>
+          <div className="divide-y">
+            {statusLoading && (
+              <div className="px-6 py-4">
+                <LoadingText />
+              </div>
+            )}
+            {readinessItems.map((item) => (
+              <div
+                key={item.label}
+                className="flex flex-col gap-3 px-6 py-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="flex min-w-0 flex-col gap-y-1">
+                  <Text size="small" leading="compact" weight="plus">
+                    {item.label}
+                  </Text>
+                  <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                    {item.description}
+                  </Text>
+                </div>
+                <StatusBadge color={readinessColor(item.ready)}>
+                  {item.ready ? "Ready" : "Needed"}
+                </StatusBadge>
+              </div>
+            ))}
+          </div>
+        </Container>
+
+        <Container className="divide-y p-0">
+          <div className="px-6 py-4">
+            <SectionHeading
+              icon={ListCheckbox}
+              title="Active configuration"
+              description="These are loaded from module options and validated at server boot."
+            />
+          </div>
+          <div className="divide-y">
+            <div className="flex items-center justify-between gap-4 px-6 py-3">
+              <div className="flex flex-col gap-y-1">
+                <Text size="small" leading="compact" weight="plus">
+                  Encrypted storage
+                </Text>
+                <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                  Required for generated EGS material at rest.
+                </Text>
+              </div>
+              <StatusBadge color={status ? "green" : "orange"}>
+                {status ? "Configured" : "Unknown"}
+              </StatusBadge>
+            </div>
+            <div className="flex items-center justify-between gap-4 px-6 py-3">
+              <div className="flex flex-col gap-y-1">
+                <Text size="small" leading="compact" weight="plus">
+                  Lifecycle notes
+                </Text>
+                <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                  Legal credit/debit notes are always active in v1.1.
+                </Text>
+              </div>
+              <StatusBadge color="green">On</StatusBadge>
+            </div>
+            <div className="flex items-center justify-between gap-4 px-6 py-3">
+              <div className="flex flex-col gap-y-1">
+                <Text size="small" leading="compact" weight="plus">
+                  Reporting mode
+                </Text>
+                <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                  Documents are reported through the Simplified flow.
+                </Text>
+              </div>
+              <StatusBadge color="green">Reporting</StatusBadge>
+            </div>
+          </div>
+        </Container>
+      </div>
+
+      <Container className="divide-y p-0">
+        <div className="px-6 py-4">
+          <SectionHeading
+            icon={ReceiptPercent}
+            title="Lifecycle coverage"
+            description="How Medusa order events map to ZATCA document types in this release."
+          />
+        </div>
+        <div className="divide-y">
+          {statusLoading && (
+            <div className="px-6 py-4">
+              <LoadingText />
+            </div>
+          )}
+          {lifecycleRows.map((item) => (
+            <div
+              key={item.label}
+              className="grid grid-cols-1 gap-3 px-6 py-3 md:grid-cols-[minmax(150px,0.4fr)_minmax(150px,0.4fr)_minmax(0,1fr)_auto]"
+            >
+              <Text size="small" leading="compact" weight="plus">
+                {item.label}
+              </Text>
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                {item.document}
+              </Text>
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                {item.detail}
+              </Text>
+              {item.enabled ? (
+                <StatusBadge color="green">Active</StatusBadge>
+              ) : (
+                <Badge size="2xsmall">Out of scope</Badge>
+              )}
+            </div>
+          ))}
+        </div>
       </Container>
 
       <Container className="divide-y p-0">
-        <div className="flex items-center justify-between px-6 py-4">
-          <div>
-            <Text size="small" leading="compact" weight="plus">
-              Reporting dashboard
-            </Text>
-            <Text size="small" leading="compact" className="text-ui-fg-subtle">
-              Invoices by status
-            </Text>
-          </div>
+        <div className="flex flex-col gap-4 px-6 py-4 lg:flex-row lg:items-start lg:justify-between">
+          <SectionHeading
+            icon={DocumentText}
+            title="Reporting health"
+            description="Counts include original invoices, credit notes, and debit notes."
+          />
           <Button
             size="small"
+            type="button"
             variant="secondary"
             onClick={() => retryFailed.mutate()}
             disabled={retryFailed.isPending || !summary || summary.failed === 0}
             isLoading={retryFailed.isPending}
           >
+            <ArrowPathMini />
             Retry failed
           </Button>
         </div>
-        <div className="grid grid-cols-2 gap-4 px-6 py-4 sm:grid-cols-5">
+
+        <div className="grid grid-cols-2 gap-x-4 gap-y-5 px-6 py-4 md:grid-cols-3 xl:grid-cols-6">
           {(
             [
-              ["Total", summary?.total],
-              ["Pending", summary?.pending],
-              ["Reported", summary?.reported],
-              ["Rejected", summary?.rejected],
-              ["Failed", summary?.failed],
+              ["Total", summary?.total, "All generated documents"],
+              ["Reported", summary?.reported, `${reportedPercent}% success rate`],
+              ["Pending", summary?.pending, "Waiting for reporting"],
+              ["Rejected", summary?.rejected, "ZATCA refused"],
+              ["Failed", summary?.failed, "Retry or remediate"],
+              ["Attention", summary?.needs_attention, "Needs admin action"],
             ] as const
-          ).map(([label, count]) => (
-            <div key={label}>
+          ).map(([label, count, detail]) => (
+            <div key={label} className="flex flex-col gap-y-1">
               <Text size="small" leading="compact" className="text-ui-fg-subtle">
                 {label}
               </Text>
               <Text size="large" leading="compact" weight="plus">
-                {count ?? "—"}
+                {summaryLoading ? "-" : formatCount(count)}
+              </Text>
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                {detail}
               </Text>
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-3 gap-4 px-6 py-4">
+
+        <div className="grid grid-cols-1 gap-0 divide-y px-6 py-0 md:grid-cols-3 md:divide-x md:divide-y-0">
           {(
             [
-              ["Invoices", summary?.documents.invoice],
-              ["Credit notes", summary?.documents.credit_note],
-              ["Debit notes", summary?.documents.debit_note],
+              ["Invoices", summary?.documents.invoice, "InvoiceTypeCode 388"],
+              ["Credit notes", summary?.documents.credit_note, "InvoiceTypeCode 381"],
+              ["Debit notes", summary?.documents.debit_note, "InvoiceTypeCode 383"],
             ] as const
-          ).map(([label, count]) => (
-            <div key={label}>
-              <Text size="small" leading="compact" className="text-ui-fg-subtle">
-                {label}
-              </Text>
-              <Text size="large" leading="compact" weight="plus">
-                {count ?? "—"}
-              </Text>
-            </div>
-          ))}
-        </div>
-        {summary && summary.needs_attention > 0 && (
-          <div className="flex flex-col gap-3 border-t px-6 py-4">
-            <div className="flex items-center gap-2">
-              <StatusBadge color="red">Needs attention</StatusBadge>
-              <Text size="small" leading="compact" weight="plus">
-                {summary.needs_attention} ZATCA document
-                {summary.needs_attention === 1 ? "" : "s"} need remediation
-              </Text>
-            </div>
-            {summary.remediation.map((item) => (
-              <div
-                key={item.invoice_id}
-                className="flex flex-col gap-2 rounded-md border border-ui-border-base px-3 py-3"
-              >
-                <Text size="small" leading="compact">
-                  {item.message}
+          ).map(([label, count, detail]) => (
+            <div key={label} className="flex items-center justify-between gap-4 py-4 md:px-4 first:md:pl-0 last:md:pr-0">
+              <div className="flex flex-col gap-y-1">
+                <Text size="small" leading="compact" weight="plus">
+                  {label}
                 </Text>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge size="2xsmall">
-                    {TERMINAL_STATUS_LABEL[item.status]}
-                  </Badge>
-                  <Badge size="2xsmall">
-                    {REMEDIATION_DOCUMENT_TYPE_LABEL[item.document_type]}
-                  </Badge>
-                  <Text size="small" leading="compact" className="text-ui-fg-subtle">
-                    Order {item.order_id}
-                  </Text>
-                  {item.action ===
-                    REMEDIATION_ACTION.ISSUE_CORRECTIVE_CREDIT_NOTE && (
-                    <Button
-                      size="small"
-                      variant="secondary"
-                      onClick={() =>
-                        correctiveCreditNote.mutate(item.invoice_id)
-                      }
-                      disabled={correctiveCreditNote.isPending}
-                      isLoading={correctiveCreditNote.isPending}
-                    >
-                      {item.action_label}
-                    </Button>
-                  )}
-                  {item.action === REMEDIATION_ACTION.RETRY_FAILED_REPORTING && (
-                    <Button
-                      size="small"
-                      variant="secondary"
-                      onClick={() => retryFailed.mutate()}
-                      disabled={retryFailed.isPending}
-                      isLoading={retryFailed.isPending}
-                    >
-                      {item.action_label}
-                    </Button>
-                  )}
+                <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                  {detail}
+                </Text>
+              </div>
+              <Text size="large" leading="compact" weight="plus">
+                {summaryLoading ? "-" : formatCount(count)}
+              </Text>
+            </div>
+          ))}
+        </div>
+      </Container>
+
+      <Container className="divide-y p-0">
+        <div className="px-6 py-4">
+          <SectionHeading
+            icon={CreditCardRefresh}
+            title="Remediation"
+            description="Rejected and failed documents keep their ICV; the order is never mutated from here."
+          />
+        </div>
+
+        {summaryLoading && (
+          <div className="px-6 py-4">
+            <LoadingText />
+          </div>
+        )}
+
+        {summary && summary.needs_attention === 0 && (
+          <div className="flex items-start gap-3 px-6 py-4">
+            <CheckCircle className="mt-0.5 shrink-0 text-ui-fg-success" />
+            <div className="flex flex-col gap-y-1">
+              <Text size="small" leading="compact" weight="plus">
+                No documents need attention
+              </Text>
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                Failed reporting and ZATCA rejections will appear here with the safe next action.
+              </Text>
+            </div>
+          </div>
+        )}
+
+        {summary && summary.needs_attention > 0 && (
+          <div className="divide-y">
+            {summary.remediation.map((item) => (
+              <div key={item.invoice_id} className="flex flex-col gap-3 px-6 py-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="flex min-w-0 flex-col gap-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge
+                        color={
+                          item.status === TERMINAL_STATUS.FAILED
+                            ? "orange"
+                            : "red"
+                        }
+                      >
+                        {TERMINAL_STATUS_LABEL[item.status]}
+                      </StatusBadge>
+                      <Badge size="2xsmall">
+                        {REMEDIATION_DOCUMENT_TYPE_LABEL[item.document_type]}
+                      </Badge>
+                      <Badge size="2xsmall">{formatSourceType(item.source_type)}</Badge>
+                    </div>
+                    <Text size="small" leading="compact">
+                      {item.message}
+                    </Text>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                        Order {item.order_id}
+                      </Text>
+                      <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                        Source {item.source_id}
+                      </Text>
+                      <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                        Document {item.invoice_id}
+                      </Text>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {item.action ===
+                      REMEDIATION_ACTION.ISSUE_CORRECTIVE_CREDIT_NOTE && (
+                      <Button
+                        size="small"
+                        type="button"
+                        variant="secondary"
+                        onClick={() =>
+                          correctiveCreditNote.mutate(item.invoice_id)
+                        }
+                        disabled={correctiveCreditNote.isPending}
+                        isLoading={correctiveCreditNote.isPending}
+                      >
+                        {item.action_label}
+                      </Button>
+                    )}
+                    {item.action === REMEDIATION_ACTION.RETRY_FAILED_REPORTING && (
+                      <Button
+                        size="small"
+                        type="button"
+                        variant="secondary"
+                        onClick={() => retryFailed.mutate()}
+                        disabled={retryFailed.isPending}
+                        isLoading={retryFailed.isPending}
+                      >
+                        <ArrowPathMini />
+                        {item.action_label}
+                      </Button>
+                    )}
+                    {item.action === REMEDIATION_ACTION.REVIEW_ZATCA_REJECTION && (
+                      <Badge size="2xsmall">Review rejection</Badge>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -418,59 +898,118 @@ const ZatcaSettingsPage = (): React.JSX.Element => {
         )}
       </Container>
 
-      {status && status.status !== "production" && (
+      {status && status.status === "production" && (
         <Container className="divide-y p-0">
           <div className="px-6 py-4">
-            <Text size="small" leading="compact" weight="plus">
-              Onboarding wizard
-            </Text>
-            <Text size="small" leading="compact" className="text-ui-fg-subtle">
-              Generates the EGS keys, exchanges the CSR + OTP for a Compliance
-              CSID, runs the compliance checks, and activates the Production
-              CSID. Credentials are stored encrypted — never shown here.
-            </Text>
+            <SectionHeading
+              icon={CheckCircle}
+              title="Onboarding complete"
+              description="The active EGS is ready for production reporting. Re-onboarding rotates the generated identity and should be handled deliberately."
+            />
           </div>
+          <div className="grid grid-cols-1 gap-4 px-6 py-4 md:grid-cols-3">
+            <div className="flex flex-col gap-y-1">
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                Organization
+              </Text>
+              <Text size="small" leading="compact" weight="plus">
+                {status.org_name ?? "-"}
+              </Text>
+            </div>
+            <div className="flex flex-col gap-y-1">
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                VAT number
+              </Text>
+              <Text size="small" leading="compact" weight="plus">
+                {status.vat_number ?? "-"}
+              </Text>
+            </div>
+            <div className="flex flex-col gap-y-1">
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                EGS serial
+              </Text>
+              <Text size="small" leading="compact" weight="plus">
+                {status.egs_serial_number ?? "-"}
+              </Text>
+            </div>
+          </div>
+        </Container>
+      )}
+
+      {status && status.status !== "production" && (
+        <Container className="divide-y p-0">
+          <div className="flex flex-col gap-4 px-6 py-4 lg:flex-row lg:items-start lg:justify-between">
+            <SectionHeading
+              icon={Clock}
+              title="Onboarding wizard"
+              description="Generates the EGS identity, runs compliance checks, and activates production reporting. Generated material is stored encrypted and never shown."
+            />
+            <Badge size="2xsmall">
+              {completedFields}/{REQUIRED_FIELD_COUNT} fields complete
+            </Badge>
+          </div>
+
           <form
-            className="px-6 py-4"
-            onSubmit={(e) => {
-              e.preventDefault();
+            className="divide-y"
+            onSubmit={(event) => {
+              event.preventDefault();
               onboard.mutate(form);
             }}
           >
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {FIELDS.map(({ key, label, placeholder }) => (
-                <div key={key} className="flex flex-col gap-1">
-                  <Label size="small" weight="plus" htmlFor={`zatca-${key}`}>
-                    {label}
-                  </Label>
-                  <Input
-                    id={`zatca-${key}`}
-                    size="small"
-                    placeholder={placeholder}
-                    value={form[key]}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, [key]: e.target.value }))
-                    }
-                  />
+            {FIELD_GROUPS.map((group) => (
+              <div key={group.title} className="grid grid-cols-1 gap-4 px-6 py-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+                <div className="flex flex-col gap-y-1">
+                  <Text size="small" leading="compact" weight="plus">
+                    {group.title}
+                  </Text>
+                  <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                    {group.description}
+                  </Text>
                 </div>
-              ))}
-              <div className="flex flex-col gap-1">
-                <Label size="small" weight="plus" htmlFor="zatca-otp">
-                  Fatoora portal OTP
-                </Label>
-                <Input
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {group.fields.map((key) => (
+                    <Field
+                      key={key}
+                      id={`zatca-${key}`}
+                      label={FIELD_META[key].label}
+                      placeholder={FIELD_META[key].placeholder}
+                      value={form[key]}
+                      onChange={(value) =>
+                        setForm((current) => ({ ...current, [key]: value }))
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            <div className="grid grid-cols-1 gap-4 px-6 py-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+              <div className="flex flex-col gap-y-1">
+                <Text size="small" leading="compact" weight="plus">
+                  Fatoora OTP
+                </Text>
+                <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                  Generate this one-time code in the ZATCA Fatoora portal.
+                </Text>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field
                   id="zatca-otp"
-                  size="small"
+                  label="OTP"
                   placeholder="123456"
-                  autoComplete="off"
                   value={form.otp}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, otp: e.target.value }))
+                  autoComplete="off"
+                  onChange={(value) =>
+                    setForm((current) => ({ ...current, otp: value }))
                   }
                 />
               </div>
             </div>
-            <div className="mt-4 flex justify-end">
+
+            <div className="flex flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <Text size="small" leading="compact" className="text-ui-fg-subtle">
+                The server refuses to boot without encrypted storage, so this form only collects non-secret seller and EGS details.
+              </Text>
               <Button
                 size="small"
                 type="submit"

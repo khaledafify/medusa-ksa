@@ -28,11 +28,50 @@ function fakeReqRes(service: Partial<InstanceType<typeof ZatcaModuleService>>) {
   return { req, res, payload: () => payload };
 }
 
+function objectKeysDeep(value: unknown): string[] {
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(objectKeysDeep);
+  }
+  const record = value as Record<string, unknown>;
+  return Object.entries(record).flatMap(([key, nested]) => [
+    key,
+    ...objectKeysDeep(nested),
+  ]);
+}
+
 describe("GET /admin/zatca/status", () => {
   it("returns the service's non-secret status view verbatim", async () => {
     const view = {
       status: "production" as const,
       environment: "sandbox",
+      configuration: {
+        trigger: "payment_captured" as const,
+        encryption: "configured" as const,
+        reporting_window_hours: 24 as const,
+        scope: "b2c_simplified_reporting" as const,
+      },
+      readiness: {
+        bootstrap: true as const,
+        compliance_identity: true,
+        production_identity: true,
+        signing_identity: true,
+        supplier_profile: true,
+      },
+      lifecycle: {
+        invoices: true as const,
+        refunds: true as const,
+        returns: true as const,
+        cancellations: true as const,
+        order_edits: true as const,
+        credit_notes: true as const,
+        debit_notes: true as const,
+        reporting: true as const,
+        clearance: false as const,
+        single_egs: true as const,
+      },
       vat_number: "399999999900003",
       org_name: "Maximum Speed Tech Supply LTD",
       egs_serial_number: "1-medusa-ksa|2-1.0|3-abc",
@@ -45,7 +84,7 @@ describe("GET /admin/zatca/status", () => {
 
     expect(payload()).toEqual(view);
     // No credential-bearing key can appear in the response shape.
-    const keys = Object.keys(payload() as Record<string, unknown>);
+    const keys = objectKeysDeep(payload());
     for (const key of keys) {
       expect(key).not.toMatch(/private|csid|secret|csr|certificate|key/i);
     }
