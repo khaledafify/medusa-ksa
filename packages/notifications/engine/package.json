@@ -1,0 +1,88 @@
+{
+  "name": "medusa-plugin-notifications",
+  "version": "0.0.0",
+  "private": false,
+  "description": "Provider-agnostic order notification engine for Medusa v2 with DB-backed Arabic SMS templates.",
+  "license": "MIT",
+  "author": "khaledafify",
+  "bugs": "https://github.com/khaledafify/medusa-ksa/issues",
+  "dependencies": {
+    "@medusa-ksa/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@medusajs/admin-sdk": "^2.15.5",
+    "@medusajs/admin-shared": "^2.13.0",
+    "@medusajs/cli": "^2.13.0",
+    "@medusajs/framework": "^2.13.0",
+    "@medusajs/icons": "^2.15.5",
+    "@medusajs/js-sdk": "^2.15.5",
+    "@medusajs/medusa": "^2.13.0",
+    "@medusajs/ui": "^4.1.15",
+    "@tanstack/react-query": "^5.64.2",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    "./.medusa/server/src/modules/*": "./.medusa/server/src/modules/*/index.js",
+    "./modules/*": "./.medusa/server/src/modules/*/index.js",
+    "./admin": {
+      "import": "./.medusa/server/src/admin/index.mjs",
+      "require": "./.medusa/server/src/admin/index.js",
+      "default": "./.medusa/server/src/admin/index.js"
+    },
+    "./*": "./.medusa/server/src/*.js"
+  },
+  "files": [
+    ".medusa/server",
+    "README.md",
+    "ENGINE-API-NOTES.md",
+    "LICENSE"
+  ],
+  "homepage": "https://github.com/khaledafify/medusa-ksa/tree/main/packages/notifications/engine#readme",
+  "keywords": [
+    "arabic",
+    "ksa",
+    "medusa-plugin",
+    "medusa-v2",
+    "notification",
+    "order-notifications",
+    "saudi",
+    "sms"
+  ],
+  "peerDependencies": {
+    "@medusajs/admin-sdk": "^2.15.5",
+    "@medusajs/framework": "^2.13.0",
+    "@medusajs/icons": "^2.15.5",
+    "@medusajs/js-sdk": "^2.15.5",
+    "@medusajs/medusa": "^2.13.0",
+    "@medusajs/ui": "^4.1.15"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/khaledafify/medusa-ksa.git",
+    "directory": "packages/notifications/engine"
+  },
+  "scripts": {
+    "build": "medusa plugin:build",
+    "dev": "medusa plugin:develop",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  }
+}

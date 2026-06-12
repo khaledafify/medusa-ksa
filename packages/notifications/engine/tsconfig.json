@@ -1,0 +1,11 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": ".medusa/server",
+    "rootDir": ".",
+    "verbatimModuleSyntax": false,
+    "jsx": "react-jsx"
+  },
+  "include": ["src", "vitest.config.ts"],
+  "exclude": [".medusa", "node_modules", "src/admin"]
+}

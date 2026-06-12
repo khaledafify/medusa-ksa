@@ -13,6 +13,7 @@
     "medusa-fulfillment-torod": "workspace:*",
     "medusa-notification-unifonic": "workspace:*",
     "medusa-payment-moyasar": "workspace:*",
+    "medusa-plugin-notifications": "workspace:*",
     "medusa-plugin-zatca": "workspace:*",
     "pg": "^8.13.0",
     "react": "^18.3.1",

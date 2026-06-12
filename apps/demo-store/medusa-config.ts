@@ -26,6 +26,12 @@ export default defineConfig({
         trigger: process.env.ZATCA_TRIGGER ?? "payment_captured",
       },
     },
+    {
+      // Provider-agnostic order notification engine. Delivery is handled by
+      // whichever sms transport provider is registered in the Notification module.
+      resolve: "medusa-plugin-notifications",
+      options: {},
+    },
   ],
   modules: [
     {
