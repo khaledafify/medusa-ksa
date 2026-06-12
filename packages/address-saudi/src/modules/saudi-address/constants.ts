@@ -62,6 +62,15 @@ export const LOCALE = {
   EN: "en",
 } as const;
 
+/** Default response sort locale. */
+export const DEFAULT_LOCALE = LOCALE.EN;
+
+/** ICU collation locales for geography ordering. */
+export const COLLATOR_LOCALE = {
+  AR: "ar-SA",
+  EN: "en-US",
+} as const;
+
 /** Default SPL API base URL. Verified during the S6 adapter slice before use. */
 export const DEFAULT_NATIONAL_ADDRESS_BASE_URL = "https://api.address.gov.sa";
 

@@ -106,6 +106,9 @@ export interface SaudiRegionSeed {
   population: number | null;
 }
 
+/** Persisted region record returned by the module service. */
+export type SaudiRegionRecord = SaudiRegionSeed;
+
 /** Normalized seed city row. */
 export interface SaudiCitySeed {
   id: string;
@@ -116,6 +119,9 @@ export interface SaudiCitySeed {
   sort_weight: number;
 }
 
+/** Persisted city record returned by the module service. */
+export type SaudiCityRecord = SaudiCitySeed;
+
 /** Normalized seed district row. */
 export interface SaudiDistrictSeed {
   id: string;
@@ -125,6 +131,36 @@ export interface SaudiDistrictSeed {
   name_ar: string;
   name_en: string;
   sort_weight: number;
+}
+
+/** Persisted district record returned by the module service. */
+export type SaudiDistrictRecord = SaudiDistrictSeed;
+
+/** Bilingual geography name exposed on every response. */
+export interface BilingualName {
+  ar: string;
+  en: string;
+}
+
+/** Region list item. */
+export interface SaudiRegionListItem {
+  code: string;
+  name: BilingualName;
+}
+
+/** City list item. */
+export interface SaudiCityListItem {
+  code: string;
+  region_code: string;
+  name: BilingualName;
+}
+
+/** District list item. */
+export interface SaudiDistrictListItem {
+  code: string;
+  city_code: string;
+  region_code: string;
+  name: BilingualName;
 }
 
 /** Normalized geography seed dataset. */
