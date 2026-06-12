@@ -1,4 +1,9 @@
-import type { CHANNEL, EVENTS, LOCALES } from "./constants";
+import type {
+  CHANNEL,
+  EVENTS,
+  LOCALES,
+  TEMPLATE_RESOLUTION_STATUS,
+} from "./constants";
 
 /** Supported notification channel. */
 export type NotificationChannel = typeof CHANNEL;
@@ -71,19 +76,19 @@ export interface SeedNotificationTemplatesResult {
 
 /** Successful template resolution result. */
 export interface FoundNotificationTemplateResolution {
-  status: "found";
+  status: typeof TEMPLATE_RESOLUTION_STATUS.FOUND;
   template: NotificationTemplateDTO;
 }
 
 /** Disabled template resolution result. */
 export interface DisabledNotificationTemplateResolution {
-  status: "disabled";
+  status: typeof TEMPLATE_RESOLUTION_STATUS.DISABLED;
   template: NotificationTemplateDTO;
 }
 
 /** Missing template resolution result. */
 export interface MissingNotificationTemplateResolution {
-  status: "missing";
+  status: typeof TEMPLATE_RESOLUTION_STATUS.MISSING;
   template: null;
 }
 

@@ -1,6 +1,6 @@
 import { MedusaService } from "@medusajs/framework/utils";
 
-import { DEFAULT_LOCALE } from "./constants";
+import { DEFAULT_LOCALE, TEMPLATE_RESOLUTION_STATUS } from "./constants";
 import NotificationTemplate from "./models/notification-template";
 import { seedDefaultNotificationTemplates } from "./seed/seed";
 import type {
@@ -28,8 +28,8 @@ export async function resolveNotificationTemplate(
 
   if (exact) {
     return exact.enabled
-      ? { status: "found", template: exact }
-      : { status: "disabled", template: exact };
+      ? { status: TEMPLATE_RESOLUTION_STATUS.FOUND, template: exact }
+      : { status: TEMPLATE_RESOLUTION_STATUS.DISABLED, template: exact };
   }
 
   if (input.locale !== DEFAULT_LOCALE) {
@@ -39,7 +39,7 @@ export async function resolveNotificationTemplate(
     });
   }
 
-  return { status: "missing", template: null };
+  return { status: TEMPLATE_RESOLUTION_STATUS.MISSING, template: null };
 }
 
 /**
