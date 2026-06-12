@@ -2,6 +2,11 @@ import type { EnvMap } from "@medusa-ksa/core";
 import { validateOptions } from "@medusa-ksa/core";
 import { z } from "zod";
 
+import type {
+  ADDRESS_STATUS,
+  ENTITY,
+  VALIDATION_REASON,
+} from "./constants.js";
 import {
   DEFAULT_NATIONAL_ADDRESS_BASE_URL,
   DEFAULT_RETRY,
@@ -161,6 +166,41 @@ export interface SaudiDistrictListItem {
   city_code: string;
   region_code: string;
   name: BilingualName;
+}
+
+/** Search result item. */
+export interface SaudiAddressSearchResult {
+  entity: (typeof ENTITY)[keyof typeof ENTITY];
+  code: string;
+  region_code?: string;
+  city_code?: string;
+  name: BilingualName;
+}
+
+/** Search input. */
+export interface SaudiAddressSearchInput {
+  query: string;
+  locale?: SaudiAddressLocale;
+  limit?: number;
+}
+
+/** Structural validation input. */
+export interface SaudiAddressValidateInput {
+  cityCode?: string;
+  cityName?: string;
+  districtCode?: string;
+  districtName?: string;
+  locale?: SaudiAddressLocale;
+}
+
+/** Structural validation result. */
+export interface SaudiAddressValidateResult {
+  status:
+    | typeof ADDRESS_STATUS.VALID
+    | typeof ADDRESS_STATUS.UNVALIDATED;
+  reason?: (typeof VALIDATION_REASON)[keyof typeof VALIDATION_REASON];
+  city?: SaudiCityListItem;
+  district?: SaudiDistrictListItem;
 }
 
 /** Normalized geography seed dataset. */

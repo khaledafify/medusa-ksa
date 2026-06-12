@@ -21,6 +21,13 @@ export const ENTITY = {
   DISTRICT: "district",
 } as const;
 
+/** Search result entity priority. */
+export const ENTITY_SEARCH_WEIGHT = {
+  REGION: 0,
+  CITY: 1,
+  DISTRICT: 2,
+} as const;
+
 /** Physical table names owned by this module. */
 export const TABLE = {
   REGION: "saudi_address_region",
@@ -51,6 +58,13 @@ export const ADDRESS_STATUS = {
 
 /** Order metadata key for the address validation status. */
 export const ORDER_METADATA_KEY = "saudi_address_status";
+
+/** Structural validation reasons. */
+export const VALIDATION_REASON = {
+  CITY_NOT_FOUND: "city_not_found",
+  DISTRICT_NOT_FOUND: "district_not_found",
+  DISTRICT_CITY_MISMATCH: "district_city_mismatch",
+} as const;
 
 /** Riyadh sort pin constants from the upstream dataset. */
 export const RIYADH_REGION_CODE = "RD";
@@ -99,6 +113,12 @@ export const QUERY_TYPE = {
 export const TTL = {
   FRESH_MS: 7 * 24 * 60 * 60 * 1000,
   STALE_MS: 30 * 24 * 60 * 60 * 1000,
+} as const;
+
+/** Search result bounds. */
+export const SEARCH_LIMIT = {
+  DEFAULT: 20,
+  MAX: 100,
 } as const;
 
 /** Expected upstream geography counts used by structural seed checks. */

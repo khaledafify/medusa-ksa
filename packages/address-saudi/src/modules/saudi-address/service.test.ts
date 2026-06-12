@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { ADDRESS_STATUS, VALIDATION_REASON } from "./constants.js";
 import SaudiAddressModuleService from "./service.js";
 import type {
   SaudiCityRecord,
@@ -156,5 +157,104 @@ describe("SaudiAddressModuleService listings", () => {
     });
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+});
+
+describe("SaudiAddressModuleService search and validation", () => {
+  it("searches regions, cities, and districts offline", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const service = makeService({
+      listSaudiAddressRegions: vi.fn(async () => REGIONS),
+      listSaudiAddressCities: vi.fn(async () => CITIES),
+      listSaudiAddressDistricts: vi.fn(async () => DISTRICTS),
+    });
+
+    const results = await service.search({ query: "riyadh", locale: "en" });
+
+    expect(results.map((result) => result.entity)).toEqual(["region", "city"]);
+    expect(results[0]).toMatchObject({
+      code: "RD",
+      name: { ar: "منطقة الرياض", en: "Riyadh" },
+    });
+
+    const districtResults = await service.search({ query: "amal", locale: "en" });
+    expect(districtResults).toEqual([
+      {
+        entity: "district",
+        code: "1",
+        city_code: "3",
+        region_code: "RD",
+        name: { ar: "حي العمل", en: "Al Amal Dist." },
+      },
+    ]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("returns valid for a real consistent city/district pair", async () => {
+    const service = makeService({
+      listSaudiAddressCities: vi.fn(async (filters?: { code?: string }) =>
+        CITIES.filter((city) => city.code === filters?.code),
+      ),
+      listSaudiAddressDistricts: vi.fn(async (filters?: { code?: string }) =>
+        DISTRICTS.filter((district) => district.code === filters?.code),
+      ),
+    });
+
+    const result = await service.validate({
+      cityCode: "3",
+      districtCode: "1",
+    });
+
+    expect(result).toMatchObject({
+      status: ADDRESS_STATUS.VALID,
+      city: { code: "3" },
+      district: { code: "1", city_code: "3" },
+    });
+  });
+
+  it("returns unvalidated when city and district are mismatched", async () => {
+    const service = makeService({
+      listSaudiAddressCities: vi.fn(async (filters?: { code?: string }) =>
+        CITIES.filter((city) => city.code === filters?.code),
+      ),
+      listSaudiAddressDistricts: vi.fn(async (filters?: { code?: string }) =>
+        DISTRICTS.filter((district) => district.code === filters?.code),
+      ),
+    });
+
+    const result = await service.validate({
+      cityCode: "6",
+      districtCode: "1",
+    });
+
+    expect(result).toMatchObject({
+      status: ADDRESS_STATUS.UNVALIDATED,
+      reason: VALIDATION_REASON.DISTRICT_CITY_MISMATCH,
+    });
+  });
+
+  it("returns unvalidated for a bad city or district", async () => {
+    const service = makeService({
+      listSaudiAddressCities: vi.fn(async (filters?: { code?: string }) =>
+        CITIES.filter((city) => city.code === filters?.code),
+      ),
+      listSaudiAddressDistricts: vi.fn(async (filters?: { code?: string }) =>
+        DISTRICTS.filter((district) => district.code === filters?.code),
+      ),
+    });
+
+    await expect(
+      service.validate({ cityCode: "missing", districtCode: "1" }),
+    ).resolves.toMatchObject({
+      status: ADDRESS_STATUS.UNVALIDATED,
+      reason: VALIDATION_REASON.CITY_NOT_FOUND,
+    });
+    await expect(
+      service.validate({ cityCode: "3", districtCode: "missing" }),
+    ).resolves.toMatchObject({
+      status: ADDRESS_STATUS.UNVALIDATED,
+      reason: VALIDATION_REASON.DISTRICT_NOT_FOUND,
+    });
   });
 });
