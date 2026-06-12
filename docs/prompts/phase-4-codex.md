@@ -76,7 +76,13 @@ pnpm lint                                          # eslint + dependency-cruiser
 ---
 
 ## CLEAN CODE & MEDUSA BEST PRACTICES (apply throughout)
-- Provider class `extends AbstractFulfillmentProviderService`, `static identifier = PROVIDER_ID`; implement the **exact** required method set (verify the list — likely `getFulfillmentOptions`, `validateFulfillmentData`, `validateFulfillmentOption`, `canCalculate`, `calculatePrice`, `createFulfillment`, `cancelFulfillment`, `createReturnFulfillment`, `getFulfillmentDocuments`, `getReturnDocuments`, `getShipmentDocuments`, `retrieveDocuments` — implement what the version defines; do not invent).
+- Provider class `extends AbstractFulfillmentProviderService` (`@medusajs/framework/utils`), `static identifier = PROVIDER_ID`. **Exact contract (confirmed in `@medusajs/utils@2.15.5`):**
+  - `getFulfillmentOptions(): Promise<FulfillmentOption[]>` — each `{ id, name, ... }`; the chosen option object is stored in the Shipping Option's `data` (so `optionData` later carries the courier id).
+  - `validateFulfillmentData(optionData, data, context): Promise<data>` — **resolve + validate the destination → `customer_city_id` here; throw a clear `MedusaError`/`KsaError` if unserviceable.**
+  - `canCalculate(data): Promise<boolean>` — true only if Torod can rate this courier/destination.
+  - `calculatePrice(optionData, data, context): Promise<{ calculated_amount, is_calculated_price_tax_inclusive }>` — **there is NO "unavailable" return value: if weight or city is missing/unratable, THROW a clear error; never fabricate `calculated_amount`.** `context` carries the cart.
+  - `createFulfillment(data, items, order, fulfillment): Promise<{ data }>` — `order`+`items` are passed in; build the Torod order/shipment from them; return tracking/label in `data`.
+  - `cancelFulfillment(data)`, `getFulfillmentDocuments(data)`, `createReturnFulfillment(fulfillment)`, `getReturnDocuments`, `getShipmentDocuments`, `retrieveDocuments`. Override only what's used; do not invent methods.
 - **Orders compatibility:** `createFulfillment` builds the Torod order/shipment from the order's items + shipping address + origin stock location; tracking number + `aws_label` URL must surface on the order's fulfillment in admin; `cancelFulfillment` reflects on the order; `createReturnFulfillment` is **NOT_SUPPORTED** (returns deferred — S0); amounts via `SarAmount`.
 - **Admin settings compatibility:** after registering in the Fulfillment module `providers` array in `apps/demo-store/medusa-config.ts`, the provider must be **selectable when an admin adds a Shipping Option** in Settings → Locations & Shipping, with `getFulfillmentOptions` populating the choices. **No custom UI** (CLAUDE.md §6). Verify it appears.
 - Thin methods, pure helpers, `KsaError`/`toMedusaError` at boundaries, deterministic + injectable I/O for tests, no hidden global state.
@@ -97,7 +103,7 @@ pnpm lint                                          # eslint + dependency-cruiser
 ### S2 — Provider skeleton, options, rates
 - [ ] **T2.1** Provider class skeleton (`extends AbstractFulfillmentProviderService`, `static identifier = PROVIDER_ID`); register in `apps/demo-store/medusa-config.ts`. *Accept:* demo-store boots; provider appears in Settings → Shipping when adding a Shipping Option (admin compatibility — verify).
 - [ ] **T2.2** `getFulfillmentOptions` — one option per courier (ids via `optionIdForCourier`). *Accept:* one stable option per courier.
-- [ ] **T2.3** `calculatePrice` via `POST /courier/partners/list` — inputs: **weight** (cart items), **`customer_city_id`** (resolve cart city via `/get-all/cities`), **`no_of_box`** (default 1), **order_total**, **payment**; return the option's courier `rate`. *Accept:* returns the right courier's rate (mocked Torod); **missing weight ⇒ unavailable**, **unresolvable city ⇒ unavailable** (tests) — never a guessed price; `TOROD_DEFAULT_WEIGHT_KG`/`TOROD_DEFAULT_BOX_COUNT` only when set.
+- [ ] **T2.3** `calculatePrice` via `POST /courier/partners/list` — inputs: **weight** (cart items), **`customer_city_id`** (resolve cart city via `/get-all/cities`), **`no_of_box`** (default 1), **order_total**, **payment**; return the option's courier `rate`. *Accept:* returns the right courier's rate (mocked Torod); **missing weight ⇒ THROWS a clear error**, **unresolvable city ⇒ THROWS** (tests) — Medusa's `calculatePrice` has no "unavailable" return, so **never fabricate `calculated_amount`**; `TOROD_DEFAULT_WEIGHT_KG`/`TOROD_DEFAULT_BOX_COUNT` only when set.
 - [ ] **T2.4** `validateFulfillmentData` — serviceability + city-code mapping. *Accept:* valid passes; unknown/unserviceable city → clear `KsaError`.
 
 ### S3 — Book, label, cancel (orders compatibility)
@@ -127,7 +133,7 @@ pnpm lint                                          # eslint + dependency-cruiser
 - [ ] No `any`/ts-ignore in non-test src; no `fetch(`/`process.env` in non-loader src; no secret-leaking log/error (test proves).
 - [ ] Provider appears in admin Settings → Shipping; per-courier options selectable; **no custom UI**.
 - [ ] `createFulfillment`/`cancelFulfillment` integrate with the Medusa **order** flow (tracking/label on the order); `createReturnFulfillment` fails fast NOT_SUPPORTED (returns deferred).
-- [ ] `calculatePrice` returns **unavailable, never a guess** on missing weight / unserviceable city (tests).
+- [ ] `calculatePrice` **throws (never fabricates a price)** on missing weight / unserviceable city; serviceability is resolved/validated in `validateFulfillmentData`/`canCalculate` (tests).
 - [ ] Free shipping is a seeded **Promotion**; provider returns the true rate (ADR-0009).
 - [ ] README + status honest; changeset present; commits clean (no AI attribution); no AI-tooling/secret committed.
 - [ ] Sandbox e2e passed (rate, book, track, return-or-documented-deferral).

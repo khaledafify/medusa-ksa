@@ -25,7 +25,7 @@ You are implementing Phase 4 of the **medusa-ksa** monorepo: `medusa-fulfillment
 - **Core for everything** (ADR-0002): all HTTP via core `HttpClient`; options via `createLoader` (env-first, fail-fast); errors `KsaError`/`toMedusaError`; webhooks via core `verifyWebhook`/`verifySecretToken`; money as `SarAmount`. No raw `fetch`/axios, no `process.env` in logic, no hand-rolled HMAC, no float money.
 - **Boundaries** (ADR-0003): `@medusajs/*` are `peerDependencies` (+dev); only intra-repo import is `@medusa-ksa/core`.
 - **Provider quotes truth** (ADR-0009): **no hard-coded free-shipping / discount threshold in the provider.** Free shipping is a native Promotion only.
-- **`calculatePrice` never guesses**: missing weight / unserviceable city ⇒ **unavailable**, never a fabricated price (optional `TOROD_DEFAULT_WEIGHT_KG` escape hatch).
+- **`calculatePrice` never guesses**: missing weight / unserviceable city ⇒ **THROW a clear error** (Medusa's `calculatePrice` has no "unavailable" return), never a fabricated `calculated_amount`; resolve serviceability in `validateFulfillmentData`/`canCalculate`. Optional `TOROD_DEFAULT_WEIGHT_KG`/`TOROD_DEFAULT_BOX_COUNT` escape hatches.
 - **Book at fulfillment, label on demand**: `calculatePrice` only quotes; `createFulfillment` books; label via the document method.
 - **Hygiene:** commits clean + imperative, **no `Co-Authored-By`, no AI mention**. Never commit `.claude/ .cursor/ .codex/ .agents/ AGENTS.md .mcp.json node_modules .medusa dist` or any secret. Don't fake capability/status.
 
