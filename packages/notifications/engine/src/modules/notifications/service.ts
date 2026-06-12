@@ -54,10 +54,19 @@ class NotificationTemplateModuleService extends MedusaService({
   }
 
   /** Resolve a template by channel, event, and locale. */
+  async resolve(
+    channel: string,
+    event: string,
+    locale: string,
+  ): Promise<NotificationTemplateResolution> {
+    return resolveNotificationTemplate(this, { channel, event, locale });
+  }
+
+  /** Resolve a template from a structured input object. */
   async resolveTemplate(
     input: ResolveNotificationTemplateInput,
   ): Promise<NotificationTemplateResolution> {
-    return resolveNotificationTemplate(this, input);
+    return this.resolve(input.channel, input.event, input.locale);
   }
 }
 
