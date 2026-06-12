@@ -35,6 +35,13 @@ export interface CreateNotificationTemplateInput {
   from?: string | null;
 }
 
+/** Input used to update editable notification template fields. */
+export interface UpdateNotificationTemplateInput {
+  body?: string;
+  enabled?: boolean;
+  from?: string | null;
+}
+
 /** Input used to resolve a template by channel, event, and locale. */
 export interface ResolveNotificationTemplateInput {
   channel: string;

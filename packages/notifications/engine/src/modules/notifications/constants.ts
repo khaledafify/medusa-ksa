@@ -60,6 +60,67 @@ export const NOTIFICATION_CONTENT_FIELDS = {
 /** Admin API base route for template management. */
 export const API_ROUTE_BASE = "/admin/notification-templates" as const;
 
+/** HTTP statuses used by the admin API routes. */
+export const HTTP_STATUS = {
+  OK: 200,
+  BAD_REQUEST: 400,
+  NOT_FOUND: 404,
+} as const;
+
+/** JSON envelope keys returned by admin API routes. */
+export const API_RESPONSE_KEYS = {
+  ERROR: "error",
+  NOTIFICATION: "notification",
+  PREVIEW: "preview",
+  REASON: "reason",
+  STATUS: "status",
+  TEMPLATE: "template",
+  TEMPLATES: "templates",
+} as const;
+
+/** Trigger labels used for admin-created test notifications. */
+export const API_TRIGGER_TYPES = {
+  SEND_TEST: "notification.send_test",
+} as const;
+
+/** Send-test response statuses. */
+export const SEND_TEST_STATUS = {
+  SENT: "sent",
+  SKIPPED: "skipped",
+} as const;
+
+/** Send-test skip reasons. */
+export const SEND_TEST_SKIP_REASONS = {
+  LIVE_DISABLED: "live_send_test_disabled",
+} as const;
+
+/** Env vars used only to gate live send-test execution. */
+export const SEND_TEST_ENV = {
+  LIVE_ENABLED: "MEDUSA_NOTIFICATIONS_LIVE_SEND_TEST",
+} as const;
+
+/** Boolean env values accepted by route-level live-send gating. */
+export const ENV_VALUES = {
+  ONE: "1",
+  TRUE: "true",
+} as const;
+
+/** Deterministic sample order used by preview and send-test routes. */
+export const SAMPLE_ORDER = {
+  ID: "order_preview",
+  DISPLAY_ID: 1001,
+  TOTAL: 12345,
+  CREATED_AT: "2026-06-12T00:00:00.000Z",
+  CUSTOMER_FIRST_NAME: "Khaled",
+  CUSTOMER_LAST_NAME: "Afify",
+  CUSTOMER_PHONE: "+966544444444",
+  CUSTOMER_EMAIL: "customer@example.com",
+  SHIPPING_FIRST_NAME: "سارة",
+  SHIPPING_LAST_NAME: "العلي",
+  SHIPPING_PHONE: "+966500000000",
+  TRACKING_NUMBER: "TRK123",
+} as const;
+
 /** Template table names owned by this module. */
 export const TABLES = {
   NOTIFICATION_TEMPLATE: "notification_template",
@@ -138,6 +199,9 @@ export const ERROR_MESSAGES = {
   TEMPLATE_DISABLED: "Notification template is disabled.",
   MISSING_RECIPIENT: "Notification recipient phone was not found.",
   INVALID_TEMPLATE_BODY: "Notification template body is invalid.",
+  INVALID_REQUEST: "Notification API request is invalid.",
+  EMPTY_UPDATE: "At least one editable template field must be provided.",
+  LIVE_SEND_TEST_DISABLED: "Live send-test is disabled.",
 } as const;
 
 /** Subscriber log message builders. */

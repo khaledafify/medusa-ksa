@@ -23,7 +23,6 @@ import type {
   NotificationOrderInput,
 } from "../../modules/notifications/render/context";
 import { NotificationRenderEngine } from "../../modules/notifications/render/engine";
-import type { RenderRecord } from "../../modules/notifications/render/engine";
 import type NotificationTemplateModuleService from "../../modules/notifications/service";
 import type { NotificationEvent } from "../../modules/notifications/types";
 
@@ -66,6 +65,20 @@ export interface OrderNotificationModule {
   createNotifications(
     data: NotificationTypes.CreateNotificationDTO,
   ): Promise<NotificationTypes.NotificationDTO>;
+}
+
+/** Input used by the single helper that calls Medusa's notification module. */
+export interface CreateSmsNotificationInput {
+  notificationModule: OrderNotificationModule;
+  to: string;
+  from: string | null;
+  templateId: string;
+  text: string;
+  data: Record<string, unknown>;
+  triggerType: string;
+  resourceId: string;
+  resourceType: string;
+  idempotencyKey?: string;
 }
 
 /** Dependencies consumed by the subscriber helper. */
@@ -184,31 +197,24 @@ async function resolveOrderForNotification(
   };
 }
 
-function createNotificationData(
-  input: {
-    context: RenderRecord;
-    eventName: NotificationEvent;
-    orderId: string;
-    recipient: string;
-    renderedText: string;
-    templateId: string;
-    from: string | null;
-  },
-): NotificationTypes.CreateNotificationDTO {
-  return {
-    to: input.recipient,
+/** Create one provider-agnostic SMS notification through Medusa's module. */
+export async function createSmsNotification(
+  input: CreateSmsNotificationInput,
+): Promise<NotificationTypes.NotificationDTO> {
+  return input.notificationModule.createNotifications({
+    to: input.to,
     from: input.from,
     channel: CHANNEL,
     template: input.templateId,
-    data: input.context,
+    data: input.data,
     content: {
-      [NOTIFICATION_CONTENT_FIELDS.TEXT]: input.renderedText,
+      [NOTIFICATION_CONTENT_FIELDS.TEXT]: input.text,
     },
-    trigger_type: input.eventName,
-    resource_id: input.orderId,
-    resource_type: QUERY_ENTITIES.ORDER,
-    idempotency_key: buildIdempotencyKey(input.eventName, input.orderId),
-  };
+    trigger_type: input.triggerType,
+    resource_id: input.resourceId,
+    resource_type: input.resourceType,
+    idempotency_key: input.idempotencyKey,
+  });
 }
 
 /**
@@ -273,24 +279,26 @@ export async function handleOrderNotification(
     body: resolution.template.body,
     context,
   });
-  const notification = createNotificationData({
-    context,
-    eventName,
-    orderId,
-    recipient,
-    renderedText: rendered.text,
-    templateId: resolution.template.id,
+  const idempotencyKey = buildIdempotencyKey(eventName, orderId);
+  await createSmsNotification({
+    notificationModule: dependencies.notificationModule,
+    to: recipient,
     from: resolution.template.from,
+    templateId: resolution.template.id,
+    text: rendered.text,
+    data: context,
+    triggerType: eventName,
+    resourceId: orderId,
+    resourceType: QUERY_ENTITIES.ORDER,
+    idempotencyKey,
   });
-
-  await dependencies.notificationModule.createNotifications(notification);
 
   dependencies.logger.info(LOG_MESSAGES.NOTIFICATION_CREATED(eventName, orderId));
 
   return {
     status: ORDER_NOTIFICATION_RESULTS.CREATED,
     orderId,
-    idempotencyKey: notification.idempotency_key ?? "",
+    idempotencyKey,
   };
 }
 

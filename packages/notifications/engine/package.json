@@ -8,7 +8,8 @@
   "bugs": "https://github.com/khaledafify/medusa-ksa/issues",
   "dependencies": {
     "@medusa-ksa/core": "workspace:*",
-    "handlebars": "^4.7.8"
+    "handlebars": "^4.7.8",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@medusajs/admin-sdk": "^2.15.5",
