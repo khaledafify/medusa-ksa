@@ -96,6 +96,40 @@ describe("UnifonicClient", () => {
     );
   });
 
+  it("accepts a digits-only canonical recipient without adding a plus sign", async () => {
+    let capturedBody = "";
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      capturedBody = String(init?.body);
+      return jsonResponse(successBody("msg_digits"));
+    }) as unknown as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+    await client.sendSms({
+      ...SEND_INPUT,
+      recipient: "966501234567",
+    });
+
+    expect(new URLSearchParams(capturedBody).get(REQUEST_FIELDS.RECIPIENT)).toBe(
+      "966501234567",
+    );
+  });
+
+  it("uses the documented base URL when transport options are omitted", async () => {
+    let capturedUrl = "";
+    const fetchImpl = vi.fn(async (url: unknown) => {
+      capturedUrl = String(url);
+      return jsonResponse(successBody("msg_default_url"));
+    }) as unknown as typeof fetch;
+
+    const client = new UnifonicClient({
+      fetchImpl,
+      sleepImpl: () => Promise.resolve(),
+    });
+    await client.sendSms(SEND_INPUT);
+
+    expect(capturedUrl).toBe(`${DEFAULT_BASE_URL}${ENDPOINTS.SEND}`);
+  });
+
   it("maps Unifonic 4xx responses to KsaError without leaking AppSid", async () => {
     const fetchImpl = (async () =>
       jsonResponse(
@@ -147,6 +181,41 @@ describe("UnifonicClient", () => {
     });
   });
 
+  it("throws PROVIDER_ERROR when Unifonic returns success false without detail fields", async () => {
+    const fetchImpl = (async () =>
+      jsonResponse({
+        success: false,
+        message: "",
+        errorCode: "",
+        data: {},
+      })) as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+    await expect(client.sendSms(SEND_INPUT)).rejects.toSatisfy((err) => {
+      expect(KsaError.isKsaError(err)).toBe(true);
+      expect((err as KsaError).message).toContain("rejected");
+      expect((err as KsaError).message).not.toContain(APP_SID);
+      return true;
+    });
+  });
+
+  it("throws PROVIDER_ERROR when Unifonic success data is not an object", async () => {
+    const fetchImpl = (async () =>
+      jsonResponse({
+        success: true,
+        message: "",
+        errorCode: "ER-00",
+        data: [],
+      })) as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+    await expect(client.sendSms(SEND_INPUT)).rejects.toSatisfy((err) => {
+      expect(KsaError.isKsaError(err)).toBe(true);
+      expect((err as KsaError).code).toBe("provider_error");
+      return true;
+    });
+  });
+
   it("throws PROVIDER_ERROR instead of faking success when the message id is missing", async () => {
     const fetchImpl = (async () =>
       jsonResponse({
@@ -155,6 +224,17 @@ describe("UnifonicClient", () => {
         errorCode: "ER-00",
         data: {},
       })) as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+    await expect(client.sendSms(SEND_INPUT)).rejects.toSatisfy((err) => {
+      expect(KsaError.isKsaError(err)).toBe(true);
+      expect((err as KsaError).code).toBe("provider_error");
+      return true;
+    });
+  });
+
+  it("throws PROVIDER_ERROR instead of faking success when the message id is blank", async () => {
+    const fetchImpl = (async () => jsonResponse(successBody(""))) as typeof fetch;
 
     const client = makeClient(fetchImpl);
     await expect(client.sendSms(SEND_INPUT)).rejects.toSatisfy((err) => {

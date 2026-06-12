@@ -109,6 +109,19 @@ describe("UnifonicNotificationProviderService.send", () => {
     expect(sendSms).not.toHaveBeenCalled();
   });
 
+  it("rejects non-sms channels and does not POST", async () => {
+    const sendSms = vi.fn(async (_input: UnifonicSendInput) => ({ id: "msg_1" }));
+    const service = makeService({ sendSms });
+
+    await expect(service.send(notification({ channel: "email" }))).rejects.toSatisfy(
+      (err) =>
+        MedusaError.isMedusaError(err) &&
+        (err as Error).message.includes("sms channel"),
+    );
+
+    expect(sendSms).not.toHaveBeenCalled();
+  });
+
   it("rejects an unparseable recipient and does not POST", async () => {
     const sendSms = vi.fn(async (_input: UnifonicSendInput) => ({ id: "msg_1" }));
     const service = makeService({ sendSms });
@@ -150,6 +163,45 @@ describe("UnifonicNotificationProviderService.send", () => {
       expect((err as Error).message).not.toContain(APP_SID);
       return true;
     });
+  });
+
+  it("adds the unifonic prefix when redacting an unprefixed KsaError", async () => {
+    const sendSms = vi.fn(async (_input: UnifonicSendInput) => {
+      throw new KsaError(`upstream echoed ${APP_SID}`, {
+        code: KsaErrorCodes.PROVIDER_ERROR,
+      });
+    });
+    const service = makeService({ sendSms });
+
+    await expect(service.send(notification())).rejects.toSatisfy((err) => {
+      expect(MedusaError.isMedusaError(err)).toBe(true);
+      expect((err as Error).message).toContain(`[${PROVIDER_ID}]`);
+      expect((err as Error).message).not.toContain(APP_SID);
+      return true;
+    });
+  });
+
+  it("maps generic transport errors to a Medusa error without leaking AppSid", async () => {
+    const sendSms = vi.fn(async (_input: UnifonicSendInput) => {
+      throw new Error(`transport failed for ${APP_SID}`);
+    });
+    const service = makeService({ sendSms });
+
+    await expect(service.send(notification())).rejects.toSatisfy((err) => {
+      expect(MedusaError.isMedusaError(err)).toBe(true);
+      expect((err as Error).message).not.toContain(APP_SID);
+      return true;
+    });
+  });
+
+  it("passes through unknown non-error values during redaction", () => {
+    const service = makeService({});
+    const redactAppSid = Reflect.get(service, "redactAppSid") as (
+      this: UnifonicNotificationProviderService,
+      err: unknown,
+    ) => unknown;
+
+    expect(redactAppSid.call(service, "plain failure")).toBe("plain failure");
   });
 });
 

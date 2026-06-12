@@ -9,7 +9,10 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json-summary"],
       include: ["src/providers/unifonic/**/*.ts"],
-      exclude: ["src/providers/unifonic/**/*.test.ts"],
+      exclude: [
+        "src/providers/unifonic/**/*.test.ts",
+        "src/providers/unifonic/types.ts",
+      ],
     },
   },
 });

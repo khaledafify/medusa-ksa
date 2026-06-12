@@ -117,7 +117,7 @@ Each package publishes independently to npm with its own README and changelog. *
 | `medusa-fulfillment-spl` | [`fulfillment/spl`](./packages/fulfillment/spl) | Saudi Post (SPL) | 📋 Planned |
 | `medusa-fulfillment-imile` | [`fulfillment/imile`](./packages/fulfillment/imile) | iMile | 📋 Planned |
 | **Notifications** | | | |
-| `medusa-notification-unifonic` | [`notifications/unifonic`](./packages/notifications/unifonic) | Arabic SMS / WhatsApp via Unifonic | 📋 Planned |
+| `medusa-notification-unifonic` | [`notifications/unifonic`](./packages/notifications/unifonic) | Arabic SMS via Unifonic | 🚧 Beta |
 | `medusa-notification-taqnyat` | [`notifications/taqnyat`](./packages/notifications/taqnyat) | Arabic SMS via Taqnyat | 📋 Planned |
 | **Compliance & tooling** | | | |
 | `medusa-plugin-zatca` | [`zatca`](./packages/zatca) | **ZATCA / Fatoora Phase 2** e-invoicing — tax-correct Simplified (B2C) reporting, signed UBL + QR, credit/debit notes for order lifecycle events _(flagship; B2B clearance & multi-EGS planned)_ | 🚧 Beta |

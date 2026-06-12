@@ -8,6 +8,7 @@ import { normalizeRecipient } from "./recipient.js";
 describe("normalizeRecipient", () => {
   it("normalizes supported Saudi mobile formats to canonical international format", () => {
     expect(normalizeRecipient("0501234567")).toBe("+966501234567");
+    expect(normalizeRecipient("501234567")).toBe("+966501234567");
     expect(normalizeRecipient("966501234567")).toBe("+966501234567");
     expect(normalizeRecipient("+966501234567")).toBe("+966501234567");
   });
@@ -26,5 +27,11 @@ describe("normalizeRecipient", () => {
         RECIPIENTS.INTERNATIONAL_PREFIX,
       );
     }
+  });
+
+  it("rejects plus-prefixed and non-digit malformed recipients", () => {
+    expect(() => normalizeRecipient("+96650123456X")).toThrowError(KsaError);
+    expect(() => normalizeRecipient("not-a-phone")).toThrowError(KsaError);
+    expect(() => normalizeRecipient("96650123456")).toThrowError(KsaError);
   });
 });
