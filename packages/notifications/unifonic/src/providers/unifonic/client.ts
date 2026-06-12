@@ -101,7 +101,7 @@ export class UnifonicClient {
       : recipient;
   }
 
-  /** Parse Unifonic's classic response and fail closed on any non-success body. */
+  /** Parse Unifonic's classic response and fail closed on non-success bodies. */
   private parseSendResponse(
     response: UnifonicSendResponse,
     appSid: string,

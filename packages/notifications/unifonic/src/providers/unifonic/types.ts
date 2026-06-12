@@ -3,7 +3,7 @@ import type { z } from "zod";
 import type { KsaNotificationOptions } from "@medusa-ksa/core";
 
 import type { unifonicOptionsSchema } from "./options.js";
-import { RESPONSE_FIELDS } from "./constants.js";
+import type { RESPONSE_FIELDS } from "./constants.js";
 
 /** Validated Unifonic provider options used at runtime. */
 export type UnifonicOptions = z.infer<typeof unifonicOptionsSchema> &
@@ -50,15 +50,15 @@ export interface UnifonicSendResult {
 }
 
 /** Raw data object inside Unifonic's classic SMS response. */
-export type UnifonicResponseData = {
+export interface UnifonicResponseData {
   [RESPONSE_FIELDS.MESSAGE_ID]?: string | number;
   [key: string]: unknown;
-};
+}
 
 /** Raw body returned by Unifonic's classic SMS endpoint. */
-export type UnifonicSendResponse = {
+export interface UnifonicSendResponse {
   [RESPONSE_FIELDS.SUCCESS]?: boolean;
   [RESPONSE_FIELDS.MESSAGE]?: string;
   [RESPONSE_FIELDS.ERROR_CODE]?: string;
   [RESPONSE_FIELDS.DATA]?: UnifonicResponseData | Record<string, unknown>;
-};
+}
