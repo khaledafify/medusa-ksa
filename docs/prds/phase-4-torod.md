@@ -14,7 +14,7 @@
 3. **Missing inputs → unavailable, never guessed.** No product weight / unserviceable city ⇒ the option returns no rate. Optional configurable **default weight** escape hatch.
 4. **Tracking syncs webhook-first.** An auto-wired, core-verified webhook route maps Torod status → Medusa `shipped`/`delivered`. **Polling job only if** docs.torod.co shows Torod doesn't push webhooks.
 5. **Book at fulfillment, label on demand.** `calculatePrice` only quotes; `createFulfillment` (admin fulfills) books → tracking number + Torod shipment ref; the **label PDF is retrieved on demand** via the document method (handles sync/async labels).
-6. **Returns in v1 (contingent).** `createReturnFulfillment` books a reverse Torod shipment + on-demand return label, **verified against docs.torod.co**; deferred with a README note only if Torod's return flow is genuinely separate.
+6. **Returns deferred (S0-confirmed).** Torod's public API has **no return-booking endpoint** (only a reverse details lookup); `createReturnFulfillment` fails fast `NOT_SUPPORTED` and returns are README'd as future work (ADR-0008).
 7. **Free shipping is a Promotion, not provider code (ADR-0009).** The provider always returns the true rate; the 250 SAR (configurable) free-shipping default is a **seeded Medusa Promotion** in the scaffolder/demo-store + README.
 
 ## 2. Config
