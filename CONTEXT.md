@@ -96,6 +96,20 @@ _Avoid_: quote, pricing, estimate.
 A shippable choice the provider exposes via `getFulfillmentOptions` (here, one per courier) that an admin attaches to a Medusa **Shipping Option**.
 _Avoid_: shipping method, service, carrier service.
 
+## Addresses
+
+**National Address (العنوان الوطني)**:
+Saudi Arabia's official unified address — building number, street, district, city, postal code, additional number — issued and validated by Saudi Post (SPL). The data couriers need for reliable delivery.
+_Avoid_: address (too generic), postal address.
+
+**Short address**:
+The memorable 4-letter + 4-digit code (e.g. `RRRD2929`) that resolves to a full National Address. Mandatory in KSA since 1 Jan 2026.
+_Avoid_: postal code, zip, address code.
+
+**Address validation status**:
+The order-level flag (`valid` | `unvalidated` | `unchecked`) recording whether the shipping address verified against the National Address. Advisory by default — it surfaces bad addresses without blocking the order.
+_Avoid_: verified flag, address error.
+
 ## Configuration
 
 **Sandbox**:
