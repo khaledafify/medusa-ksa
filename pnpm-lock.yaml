@@ -65,6 +65,9 @@ importers:
       awilix:
         specifier: ^8.0.1
         version: 8.0.1
+      medusa-fulfillment-torod:
+        specifier: workspace:*
+        version: link:../../packages/fulfillment/torod
       medusa-payment-moyasar:
         specifier: workspace:*
         version: link:../../packages/payments/moyasar

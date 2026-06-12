@@ -78,6 +78,13 @@ export const TOROD_TOKEN = {
   FALLBACK_EXPIRES_IN_HOURS: 24,
 } as const;
 
+export const TOROD_ERROR_MESSAGES = {
+  RATES_NOT_READY: "Torod live rates are not available until rate calculation is configured.",
+  BOOKING_NOT_READY: "Torod shipment booking is not available until booking is configured.",
+  CANCELLATION_NOT_READY: "Torod shipment cancellation is not available until cancellation is configured.",
+  RETURNS_DEFERRED: "Returns are not supported by Torod's public API.",
+} as const;
+
 export const TOROD_REQUEST_FIELDS = {
   CLIENT_ID: "client_id",
   CLIENT_SECRET: "client_secret",

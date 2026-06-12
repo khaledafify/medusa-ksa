@@ -42,5 +42,18 @@ export default defineConfig({
         ],
       },
     },
+    {
+      // Re-declare the Fulfillment module to register the Torod aggregator.
+      // Credentials are read env-first by the provider's core-backed option resolver.
+      resolve: "@medusajs/medusa/fulfillment",
+      options: {
+        providers: [
+          {
+            resolve: "medusa-fulfillment-torod/providers/torod",
+            id: "torod",
+          },
+        ],
+      },
+    },
   ],
 })
