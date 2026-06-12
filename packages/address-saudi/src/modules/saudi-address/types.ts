@@ -5,6 +5,8 @@ import { z } from "zod";
 import type {
   ADDRESS_STATUS,
   ENTITY,
+  SPL_CACHE_STATE,
+  SPL_RESOLVE_STATUS,
   VALIDATION_REASON,
 } from "./constants.js";
 import {
@@ -153,6 +155,16 @@ export interface SaudiDistrictSeed {
 /** Persisted district record returned by the module service. */
 export type SaudiDistrictRecord = SaudiDistrictSeed;
 
+/** Persisted optional SPL lookup cache row. */
+export interface SaudiAddressCacheRecord {
+  id: string;
+  cache_key: string;
+  query_type: string;
+  payload: Record<string, unknown>;
+  expires_at: Date | string;
+  stale_expires_at: Date | string;
+}
+
 /** Bilingual geography name exposed on every response. */
 export interface BilingualName {
   ar: string;
@@ -202,6 +214,9 @@ export interface SaudiAddressValidateInput {
   cityName?: string;
   districtCode?: string;
   districtName?: string;
+  buildingNumber?: string;
+  postCode?: string;
+  additionalNumber?: string;
   locale?: SaudiAddressLocale;
 }
 
@@ -213,6 +228,77 @@ export interface SaudiAddressValidateResult {
   reason?: (typeof VALIDATION_REASON)[keyof typeof VALIDATION_REASON];
   city?: SaudiCityListItem;
   district?: SaudiDistrictListItem;
+}
+
+/** Short-address resolve input. */
+export interface SaudiAddressResolveInput {
+  shortAddress: string;
+}
+
+/** Optional SPL adapter disabled response. */
+export interface SaudiAddressResolveDisabledResult {
+  status: typeof SPL_RESOLVE_STATUS.DISABLED;
+  message: string;
+}
+
+/** Bilingual field returned by the optional SPL adapter when available. */
+export interface SplBilingualField {
+  ar?: string;
+  en?: string;
+}
+
+/** Normalized SPL address. Fields are optional because the public short-address page is sparse. */
+export interface SplResolvedAddress {
+  address_line_1?: SplBilingualField;
+  address_line_2?: SplBilingualField;
+  building_number?: string;
+  street?: SplBilingualField;
+  district?: SplBilingualField;
+  city?: SplBilingualField;
+  post_code?: string;
+  additional_number?: string;
+  region?: SplBilingualField;
+  latitude?: string;
+  longitude?: string;
+}
+
+/** Successful optional SPL short-address resolve response. */
+export interface SaudiAddressResolveSuccessResult {
+  status:
+    | typeof SPL_RESOLVE_STATUS.FOUND
+    | typeof SPL_RESOLVE_STATUS.NOT_FOUND;
+  cache_state: (typeof SPL_CACHE_STATE)[keyof typeof SPL_CACHE_STATE];
+  short_address: string;
+  found: boolean;
+  address?: SplResolvedAddress;
+}
+
+/** Store/service short-address resolve response. */
+export type SaudiAddressResolveResult =
+  | SaudiAddressResolveDisabledResult
+  | SaudiAddressResolveSuccessResult;
+
+/** Official SPL verification input. */
+export interface SaudiAddressOfficialVerifyInput {
+  buildingNumber: string;
+  postCode: string;
+  additionalNumber: string;
+}
+
+/** Official SPL verification result. */
+export interface SaudiAddressOfficialVerifyResult {
+  verified: boolean;
+  cache_state: (typeof SPL_CACHE_STATE)[keyof typeof SPL_CACHE_STATE];
+}
+
+/** Injectable optional SPL client surface used by the module service. */
+export interface SplClientContract {
+  resolveShortAddress: (
+    input: SaudiAddressResolveInput | string,
+  ) => Promise<SaudiAddressResolveSuccessResult>;
+  verifyNationalAddress: (
+    input: SaudiAddressOfficialVerifyInput,
+  ) => Promise<SaudiAddressOfficialVerifyResult>;
 }
 
 /** Normalized geography seed dataset. */

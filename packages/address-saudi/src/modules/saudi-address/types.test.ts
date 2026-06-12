@@ -43,7 +43,7 @@ describe("validateSaudiAddressOptions", () => {
 
     expect(options.nationalAddressApiKey).toBeUndefined();
     expect(options.strict).toBe(false);
-    expect(options.baseUrl).toBe("https://api.address.gov.sa");
+    expect(options.baseUrl).toBe("https://apina.address.gov.sa/NationalAddress");
   });
 
   it("falls back to documented env vars when supplied", () => {

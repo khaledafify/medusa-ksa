@@ -32,6 +32,7 @@
   "files": [
     ".medusa/server",
     "README.md",
+    "SPL-API-NOTES.md",
     "LICENSE"
   ],
   "homepage": "https://github.com/khaledafify/medusa-ksa/tree/main/packages/address-saudi#readme",

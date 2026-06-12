@@ -10,6 +10,7 @@ import {
   LOCALE,
   SPL_RESOLVE_DISABLED_MESSAGE,
   SPL_RESOLVE_STATUS,
+  SPL_CACHE_STATE,
   STORE_FIELD,
   STORE_RESPONSE_KEY,
   VALIDATION_REASON,
@@ -46,6 +47,7 @@ interface FakeService {
   districts: ReturnType<typeof vi.fn>;
   search: ReturnType<typeof vi.fn>;
   validate: ReturnType<typeof vi.fn>;
+  resolveShortAddress: ReturnType<typeof vi.fn>;
 }
 
 function makeResponse<Body>(): MedusaResponse<Body> & CapturedResponse<Body> {
@@ -88,6 +90,7 @@ function makeService(): FakeService {
     districts: vi.fn(),
     search: vi.fn(),
     validate: vi.fn(),
+    resolveShortAddress: vi.fn(),
   };
 }
 
@@ -244,6 +247,9 @@ describe("Saudi Address Store API routes", () => {
       districtCode: "999",
       cityName: undefined,
       districtName: undefined,
+      buildingNumber: undefined,
+      postCode: undefined,
+      additionalNumber: undefined,
       locale: LOCALE.EN,
     } satisfies StoreSaudiAddressValidateBody;
 
@@ -265,26 +271,74 @@ describe("Saudi Address Store API routes", () => {
     expectNoSecret(response.payload);
   });
 
-  it("registers resolve but keeps SPL disabled until the adapter slice", async () => {
+  it("returns the disabled resolve response when the SPL adapter is off", async () => {
+    const service = makeService();
+    service.resolveShortAddress.mockResolvedValue({
+      status: SPL_RESOLVE_STATUS.DISABLED,
+      message: SPL_RESOLVE_DISABLED_MESSAGE,
+    });
     const response = makeResponse();
     const body = {
       shortAddress: "RRRD2929",
     } satisfies StoreSaudiAddressResolveBody;
 
-    postResolve(
+    await postResolve(
       makeRequest<StoreSaudiAddressResolveBody, Record<string, never>>(
         body,
         {},
-        makeService(),
+        service,
       ),
       response,
     );
 
+    expect(service.resolveShortAddress).toHaveBeenCalledWith(body);
     expect(response.statusCode).toBe(HTTP_STATUS.NOT_IMPLEMENTED);
     expect(response.payload).toEqual({
       [STORE_RESPONSE_KEY.RESOLVE]: {
         status: SPL_RESOLVE_STATUS.DISABLED,
         message: SPL_RESOLVE_DISABLED_MESSAGE,
+      },
+    });
+    expectNoSecret(response.payload);
+  });
+
+  it("returns cache-aware short-address resolve when the SPL adapter is enabled", async () => {
+    const service = makeService();
+    service.resolveShortAddress.mockResolvedValue({
+      status: SPL_RESOLVE_STATUS.FOUND,
+      cache_state: SPL_CACHE_STATE.HIT,
+      short_address: "RRRD2929",
+      found: true,
+      address: {
+        building_number: "8228",
+        city: { ar: "الرياض", en: "Riyadh" },
+      },
+    });
+    const response = makeResponse();
+    const body = {
+      shortAddress: "RRRD2929",
+    } satisfies StoreSaudiAddressResolveBody;
+
+    await postResolve(
+      makeRequest<StoreSaudiAddressResolveBody, Record<string, never>>(
+        body,
+        {},
+        service,
+      ),
+      response,
+    );
+
+    expect(response.statusCode).toBeUndefined();
+    expect(response.payload).toEqual({
+      [STORE_RESPONSE_KEY.RESOLVE]: {
+        status: SPL_RESOLVE_STATUS.FOUND,
+        cache_state: SPL_CACHE_STATE.HIT,
+        short_address: "RRRD2929",
+        found: true,
+        address: {
+          building_number: "8228",
+          city: { ar: "الرياض", en: "Riyadh" },
+        },
       },
     });
     expectNoSecret(response.payload);

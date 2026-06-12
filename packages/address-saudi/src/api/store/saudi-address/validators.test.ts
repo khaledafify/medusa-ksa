@@ -35,6 +35,9 @@ describe("Saudi Address Store API validators", () => {
       StoreSaudiAddressValidateBody.parse({
         [STORE_FIELD.CITY_CODE]: "3",
         [STORE_FIELD.DISTRICT_NAME]: "Olaya",
+        [STORE_FIELD.BUILDING_NUMBER]: "8228",
+        [STORE_FIELD.POST_CODE]: "12643",
+        [STORE_FIELD.ADDITIONAL_NUMBER]: "2121",
         [STORE_FIELD.LOCALE]: LOCALE.AR,
       }),
     ).toEqual({
@@ -42,17 +45,28 @@ describe("Saudi Address Store API validators", () => {
       cityName: undefined,
       districtCode: undefined,
       districtName: "Olaya",
+      buildingNumber: "8228",
+      postCode: "12643",
+      additionalNumber: "2121",
       locale: LOCALE.AR,
     });
   });
 
-  it("maps the short-address resolve body without enabling SPL", () => {
+  it("normalizes the short-address resolve body", () => {
     expect(
       StoreSaudiAddressResolveBody.parse({
-        [STORE_FIELD.SHORT_ADDRESS]: "RRRD2929",
+        [STORE_FIELD.SHORT_ADDRESS]: "rrrd2929",
       }),
     ).toEqual({
       shortAddress: "RRRD2929",
     });
+  });
+
+  it("rejects malformed short-address values", () => {
+    expect(() =>
+      StoreSaudiAddressResolveBody.parse({
+        [STORE_FIELD.SHORT_ADDRESS]: "bad",
+      }),
+    ).toThrow();
   });
 });

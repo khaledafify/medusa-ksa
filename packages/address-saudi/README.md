@@ -35,7 +35,7 @@ No key is required for offline geography, search, or structural validation.
 
 ```dotenv
 NATIONAL_ADDRESS_API_KEY=          # optional, enables SPL adapter
-NATIONAL_ADDRESS_BASE_URL=https://api.address.gov.sa
+NATIONAL_ADDRESS_BASE_URL=https://apina.address.gov.sa/NationalAddress
 SAUDI_ADDRESS_STRICT=false
 ```
 

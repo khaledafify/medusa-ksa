@@ -24,6 +24,7 @@ type CheckoutStatus = AddressValidationStatus;
 export interface SaudiAddressCheckoutShippingAddress {
   [SHIPPING_ADDRESS_FIELD.CITY]?: string | null;
   [SHIPPING_ADDRESS_FIELD.PROVINCE]?: string | null;
+  [SHIPPING_ADDRESS_FIELD.POSTAL_CODE]?: string | null;
   [SHIPPING_ADDRESS_FIELD.METADATA]?: Record<string, unknown> | null;
 }
 
@@ -84,6 +85,17 @@ export function validationInputFromShippingAddress(
     districtCode: stringMetadata(
       metadata,
       ADDRESS_METADATA_KEY.DISTRICT_CODE,
+    ),
+    buildingNumber: stringMetadata(
+      metadata,
+      ADDRESS_METADATA_KEY.BUILDING_NUMBER,
+    ),
+    postCode:
+      stringMetadata(metadata, ADDRESS_METADATA_KEY.POST_CODE) ??
+      nonBlank(address[SHIPPING_ADDRESS_FIELD.POSTAL_CODE]),
+    additionalNumber: stringMetadata(
+      metadata,
+      ADDRESS_METADATA_KEY.ADDITIONAL_NUMBER,
     ),
     cityName: nonBlank(address[SHIPPING_ADDRESS_FIELD.CITY]),
     districtName: nonBlank(address[SHIPPING_ADDRESS_FIELD.PROVINCE]),

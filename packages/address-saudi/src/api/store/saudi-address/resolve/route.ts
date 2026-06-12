@@ -5,31 +5,28 @@ import type {
 
 import {
   HTTP_STATUS,
-  SPL_RESOLVE_DISABLED_MESSAGE,
   SPL_RESOLVE_STATUS,
   STORE_RESPONSE_KEY,
 } from "../../../../modules/saudi-address/constants.js";
+import type { SaudiAddressResolveResult } from "../../../../modules/saudi-address/types.js";
+import { resolveSaudiAddressService } from "../helpers.js";
 import type { StoreSaudiAddressResolveBody } from "../validators.js";
 
-interface StoreSaudiAddressResolveDisabledResponse {
-  [STORE_RESPONSE_KEY.RESOLVE]: {
-    status: typeof SPL_RESOLVE_STATUS.DISABLED;
-    message: typeof SPL_RESOLVE_DISABLED_MESSAGE;
-  };
+interface StoreSaudiAddressResolveResponse {
+  [STORE_RESPONSE_KEY.RESOLVE]: SaudiAddressResolveResult;
 }
 
-/**
- * Reserve the Store API resolve route. S6 replaces this disabled response with
- * the optional SPL adapter once verified and explicitly enabled by API key.
- */
-export function POST(
-  _req: MedusaStoreRequest<StoreSaudiAddressResolveBody>,
-  res: MedusaResponse<StoreSaudiAddressResolveDisabledResponse>,
-): void {
-  res.status(HTTP_STATUS.NOT_IMPLEMENTED).json({
-    [STORE_RESPONSE_KEY.RESOLVE]: {
-      status: SPL_RESOLVE_STATUS.DISABLED,
-      message: SPL_RESOLVE_DISABLED_MESSAGE,
-    },
+/** Resolve a Saudi short address when the optional SPL adapter is enabled. */
+export async function POST(
+  req: MedusaStoreRequest<StoreSaudiAddressResolveBody>,
+  res: MedusaResponse<StoreSaudiAddressResolveResponse>,
+): Promise<void> {
+  const service = resolveSaudiAddressService(req);
+  const resolve = await service.resolveShortAddress(req.validatedBody);
+  if (resolve.status === SPL_RESOLVE_STATUS.DISABLED) {
+    res.status(HTTP_STATUS.NOT_IMPLEMENTED);
+  }
+  res.json({
+    [STORE_RESPONSE_KEY.RESOLVE]: resolve,
   });
 }

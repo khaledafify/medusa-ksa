@@ -9,6 +9,7 @@ export { default as SaudiAddressModuleService } from "./service.js";
 export * from "./constants.js";
 export * from "./data.js";
 export * from "./seed-sql.js";
+export * from "./spl-client.js";
 export * from "./types.js";
 
 export default Module(MODULE_NAME, {

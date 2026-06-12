@@ -2,23 +2,37 @@ import { MedusaService } from "@medusajs/framework/utils";
 
 import {
   ADDRESS_STATUS,
+  CACHE_KEY,
   COLLATOR_LOCALE,
   DEFAULT_LOCALE,
   ENTITY,
   ENTITY_SEARCH_WEIGHT,
   LOCALE,
+  QUERY_TYPE,
   SEARCH_LIMIT,
+  SPL_CACHE_STATE,
+  SPL_RESOLVE_DISABLED_MESSAGE,
+  SPL_RESOLVE_STATUS,
+  TTL,
   VALIDATION_REASON,
 } from "./constants.js";
+import SaudiAddressCache from "./models/cache.js";
 import SaudiAddressCity from "./models/city.js";
 import SaudiAddressDistrict from "./models/district.js";
 import SaudiAddressRegion from "./models/region.js";
+import { SplClient } from "./spl-client.js";
 import {
   getSaudiAddressOptions,
   validateSaudiAddressOptions,
 } from "./types.js";
 import type {
+  SaudiAddressCacheRecord,
+  SaudiAddressOfficialVerifyInput,
+  SaudiAddressOfficialVerifyResult,
   SaudiAddressLocale,
+  SaudiAddressResolveInput,
+  SaudiAddressResolveResult,
+  SaudiAddressResolveSuccessResult,
   SaudiAddressSearchInput,
   SaudiAddressSearchResult,
   SaudiAddressOptions,
@@ -30,6 +44,7 @@ import type {
   SaudiDistrictRecord,
   SaudiRegionListItem,
   SaudiRegionRecord,
+  SplClientContract,
 } from "./types.js";
 
 type ListFilters = Record<string, unknown>;
@@ -50,6 +65,29 @@ interface GeneratedGeographyMethods {
   listSaudiAddressRegions(filters?: unknown): Promise<SaudiRegionRecord[]>;
   listSaudiAddressCities(filters?: unknown): Promise<SaudiCityRecord[]>;
   listSaudiAddressDistricts(filters?: unknown): Promise<SaudiDistrictRecord[]>;
+  listSaudiAddressCaches(
+    filters?: unknown,
+    config?: unknown,
+  ): Promise<SaudiAddressCacheRecord[]>;
+  createSaudiAddressCaches(input: SaudiAddressCacheInsert): Promise<unknown>;
+  updateSaudiAddressCaches(input: SaudiAddressCacheUpdate): Promise<unknown>;
+}
+
+interface SaudiAddressCacheInsert {
+  cache_key: string;
+  query_type: SaudiAddressCacheRecord["query_type"];
+  payload: Record<string, unknown>;
+  expires_at: Date;
+  stale_expires_at: Date;
+}
+
+interface SaudiAddressCacheUpdate extends SaudiAddressCacheInsert {
+  id: string;
+}
+
+interface SaudiAddressRuntimeDeps {
+  clock?: () => Date;
+  splClient?: SplClientContract;
 }
 
 function generatedMethods(
@@ -205,6 +243,107 @@ function sortSearchResults(
   });
 }
 
+function cacheKey(
+  queryType: SaudiAddressCacheRecord["query_type"],
+  parts: string[],
+): string {
+  const normalizedParts = parts.map((part) => part.trim().toUpperCase());
+  return [
+    queryType,
+    normalizedParts.join(CACHE_KEY.PART_SEPARATOR),
+  ].join(CACHE_KEY.SEPARATOR);
+}
+
+function dateMs(value: Date | string): number {
+  return new Date(value).getTime();
+}
+
+function isFresh(row: SaudiAddressCacheRecord, now: Date): boolean {
+  return dateMs(row.expires_at) > now.getTime();
+}
+
+function isStaleReadable(row: SaudiAddressCacheRecord, now: Date): boolean {
+  return dateMs(row.stale_expires_at) > now.getTime();
+}
+
+function isResolvePayload(
+  value: unknown,
+): value is SaudiAddressResolveSuccessResult {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    (record.status === SPL_RESOLVE_STATUS.FOUND ||
+      record.status === SPL_RESOLVE_STATUS.NOT_FOUND) &&
+    typeof record.short_address === "string" &&
+    typeof record.found === "boolean"
+  );
+}
+
+function resolvePayload(
+  value: unknown,
+): SaudiAddressResolveSuccessResult | undefined {
+  return isResolvePayload(value) ? value : undefined;
+}
+
+function withResolveCacheState(
+  payload: SaudiAddressResolveSuccessResult,
+  cacheState: SaudiAddressResolveSuccessResult["cache_state"],
+): SaudiAddressResolveSuccessResult {
+  return {
+    ...payload,
+    cache_state: cacheState,
+  };
+}
+
+function isVerifyPayload(
+  value: unknown,
+): value is SaudiAddressOfficialVerifyResult {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return typeof record.verified === "boolean";
+}
+
+function verifyPayload(
+  value: unknown,
+): SaudiAddressOfficialVerifyResult | undefined {
+  return isVerifyPayload(value) ? value : undefined;
+}
+
+function withVerifyCacheState(
+  payload: SaudiAddressOfficialVerifyResult,
+  cacheState: SaudiAddressOfficialVerifyResult["cache_state"],
+): SaudiAddressOfficialVerifyResult {
+  return {
+    ...payload,
+    cache_state: cacheState,
+  };
+}
+
+function cachePayload(payload: object): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(payload));
+}
+
+function officialVerifyInput(
+  input: SaudiAddressValidateInput,
+): SaudiAddressOfficialVerifyInput | undefined {
+  if (
+    input.buildingNumber === undefined ||
+    input.postCode === undefined ||
+    input.additionalNumber === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    buildingNumber: input.buildingNumber,
+    postCode: input.postCode,
+    additionalNumber: input.additionalNumber,
+  };
+}
+
 /**
  * Saudi Address module service. `MedusaService` provides CRUD methods for the
  * seeded geography tables; domain list/search/validation methods are layered
@@ -214,21 +353,34 @@ class SaudiAddressModuleService extends MedusaService({
   SaudiAddressRegion,
   SaudiAddressCity,
   SaudiAddressDistrict,
+  SaudiAddressCache,
 }) {
   protected readonly options: SaudiAddressOptions;
+  protected readonly clock: () => Date;
+  protected readonly splClient?: SplClientContract;
 
-  constructor(container: Record<string, unknown>, options?: unknown) {
-    // eslint-disable-next-line prefer-rest-params
-    super(...(arguments as unknown as [Record<string, unknown>]));
+  constructor(
+    container: Record<string, unknown>,
+    options?: unknown,
+    deps: SaudiAddressRuntimeDeps = {},
+  ) {
+    super(container);
     this.options =
       options === undefined
         ? getSaudiAddressOptions()
         : validateSaudiAddressOptions(options, {});
+    this.clock = deps.clock ?? (() => new Date());
+    this.splClient = deps.splClient ?? this.buildSplClient();
   }
 
   /** Whether checkout validation should block genuinely invalid addresses. */
   isStrict(): boolean {
     return this.options.strict;
+  }
+
+  /** Whether the optional SPL adapter is enabled by API key. */
+  isSplEnabled(): boolean {
+    return this.splClient !== undefined;
   }
 
   /**
@@ -323,11 +475,120 @@ class SaudiAddressModuleService extends MedusaService({
       };
     }
 
+    const officialInput = officialVerifyInput(input);
+    if (officialInput !== undefined && this.splClient !== undefined) {
+      try {
+        const official = await this.verifyNationalAddress(officialInput);
+        if (
+          !official.verified &&
+          official.cache_state !== SPL_CACHE_STATE.STALE
+        ) {
+          return {
+            status: ADDRESS_STATUS.UNVALIDATED,
+            reason: VALIDATION_REASON.OFFICIAL_NOT_FOUND,
+            city: cityItem(city),
+            district: districtItem(district),
+          };
+        }
+      } catch {
+        // SPL is optional and unreliable; structural validation remains the floor.
+      }
+    }
+
     return {
       status: ADDRESS_STATUS.VALID,
       city: cityItem(city),
       district: districtItem(district),
     };
+  }
+
+  /** Resolve a Saudi short address through the optional SPL adapter. */
+  async resolveShortAddress(
+    input: SaudiAddressResolveInput,
+  ): Promise<SaudiAddressResolveResult> {
+    if (this.splClient === undefined) {
+      return {
+        status: SPL_RESOLVE_STATUS.DISABLED,
+        message: SPL_RESOLVE_DISABLED_MESSAGE,
+      };
+    }
+
+    const shortAddress = input.shortAddress.trim().toUpperCase();
+    const key = cacheKey(QUERY_TYPE.SHORT_ADDRESS, [shortAddress]);
+    const cached = await this.cacheRow(key);
+    if (cached !== undefined && isFresh(cached, this.clock())) {
+      const payload = resolvePayload(cached.payload);
+      if (payload !== undefined) {
+        return withResolveCacheState(payload, SPL_CACHE_STATE.HIT);
+      }
+    }
+
+    try {
+      const resolved = await this.splClient.resolveShortAddress(shortAddress);
+      await this.writeCache(
+        QUERY_TYPE.SHORT_ADDRESS,
+        key,
+        cachePayload(resolved),
+        cached,
+      );
+      return resolved;
+    } catch (err) {
+      const payload = resolvePayload(cached?.payload);
+      if (
+        cached !== undefined &&
+        payload !== undefined &&
+        isStaleReadable(cached, this.clock())
+      ) {
+        return withResolveCacheState(payload, SPL_CACHE_STATE.STALE);
+      }
+      throw err;
+    }
+  }
+
+  /** Officially verify a National Address tuple through the optional SPL adapter. */
+  async verifyNationalAddress(
+    input: SaudiAddressOfficialVerifyInput,
+  ): Promise<SaudiAddressOfficialVerifyResult> {
+    if (this.splClient === undefined) {
+      return {
+        verified: false,
+        cache_state: SPL_CACHE_STATE.MISS,
+      };
+    }
+
+    const key = cacheKey(QUERY_TYPE.NATIONAL_ADDRESS, [
+      input.buildingNumber,
+      input.postCode,
+      input.additionalNumber,
+    ]);
+    const cached = await this.cacheRow(key);
+    if (cached !== undefined && isFresh(cached, this.clock())) {
+      const payload = verifyPayload(cached.payload);
+      if (payload !== undefined) {
+        return withVerifyCacheState(payload, SPL_CACHE_STATE.HIT);
+      }
+    }
+
+    try {
+      const verified = await this.splClient.verifyNationalAddress(input);
+      await this.writeCache(
+        QUERY_TYPE.NATIONAL_ADDRESS,
+        key,
+        cachePayload(verified),
+        cached,
+      );
+      return verified;
+    } catch (err) {
+      const payload = verifyPayload(cached?.payload);
+      if (
+        cached !== undefined &&
+        payload !== undefined &&
+        isStaleReadable(cached, this.clock())
+      ) {
+        return withVerifyCacheState(payload, SPL_CACHE_STATE.STALE);
+      }
+      throw err;
+    }
   }
 
   private async findCity(
@@ -365,6 +626,52 @@ class SaudiAddressModuleService extends MedusaService({
       city_code: city.code,
     });
     return rows.find((row) => matchesName(row, districtName));
+  }
+
+  private buildSplClient(): SplClientContract | undefined {
+    if (this.options.nationalAddressApiKey === undefined) {
+      return undefined;
+    }
+    return new SplClient({
+      apiKey: this.options.nationalAddressApiKey,
+      baseUrl: this.options.baseUrl,
+      timeoutMs: this.options.timeoutMs,
+      retry: this.options.retry,
+    });
+  }
+
+  private async cacheRow(
+    key: string,
+  ): Promise<SaudiAddressCacheRecord | undefined> {
+    const [row] = await generatedMethods(this).listSaudiAddressCaches(
+      { cache_key: key },
+      { take: 1 },
+    );
+    return row;
+  }
+
+  private async writeCache(
+    queryType: SaudiAddressCacheRecord["query_type"],
+    key: string,
+    payload: Record<string, unknown>,
+    existing: SaudiAddressCacheRecord | undefined,
+  ): Promise<void> {
+    const now = this.clock();
+    const input: SaudiAddressCacheInsert = {
+      cache_key: key,
+      query_type: queryType,
+      payload,
+      expires_at: new Date(now.getTime() + TTL.FRESH_MS),
+      stale_expires_at: new Date(now.getTime() + TTL.STALE_MS),
+    };
+    if (existing === undefined) {
+      await generatedMethods(this).createSaudiAddressCaches(input);
+      return;
+    }
+    await generatedMethods(this).updateSaudiAddressCaches({
+      id: existing.id,
+      ...input,
+    });
   }
 }
 

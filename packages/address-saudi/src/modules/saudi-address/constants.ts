@@ -33,6 +33,7 @@ export const TABLE = {
   REGION: "saudi_address_region",
   CITY: "saudi_address_city",
   DISTRICT: "saudi_address_district",
+  CACHE: "national_address_cache",
 } as const;
 
 /** Deterministic ID prefixes for seeded geography rows. */
@@ -40,6 +41,7 @@ export const ID_PREFIX = {
   REGION: "sareg",
   CITY: "sacity",
   DISTRICT: "sadist",
+  CACHE: "sacache",
 } as const;
 
 /** Environment variables owned by this module. */
@@ -63,12 +65,16 @@ export const ORDER_METADATA_KEY = "saudi_address_status";
 export const ADDRESS_METADATA_KEY = {
   CITY_CODE: "saudi_city_code",
   DISTRICT_CODE: "saudi_district_code",
+  BUILDING_NUMBER: "saudi_building_number",
+  POST_CODE: "saudi_post_code",
+  ADDITIONAL_NUMBER: "saudi_additional_number",
 } as const;
 
 /** Shipping address fields read by the checkout hook. */
 export const SHIPPING_ADDRESS_FIELD = {
   CITY: "city",
   PROVINCE: "province",
+  POSTAL_CODE: "postal_code",
   METADATA: "metadata",
 } as const;
 
@@ -88,6 +94,7 @@ export const VALIDATION_REASON = {
   CITY_NOT_FOUND: "city_not_found",
   DISTRICT_NOT_FOUND: "district_not_found",
   DISTRICT_CITY_MISMATCH: "district_city_mismatch",
+  OFFICIAL_NOT_FOUND: "official_not_found",
 } as const;
 
 /** Public Store API routes served by this plugin. */
@@ -111,6 +118,9 @@ export const STORE_FIELD = {
   DISTRICT_CODE: "district_code",
   DISTRICT_NAME: "district_name",
   SHORT_ADDRESS: "short_address",
+  BUILDING_NUMBER: "building_number",
+  POST_CODE: "post_code",
+  ADDITIONAL_NUMBER: "additional_number",
 } as const;
 
 /** Store API response envelope keys. */
@@ -123,9 +133,11 @@ export const STORE_RESPONSE_KEY = {
   RESOLVE: "resolve",
 } as const;
 
-/** Resolve response status while the optional SPL adapter is disabled. */
+/** Resolve response status values for the optional SPL adapter. */
 export const SPL_RESOLVE_STATUS = {
   DISABLED: "disabled",
+  FOUND: "found",
+  NOT_FOUND: "not_found",
 } as const;
 
 /** Resolve response message while the optional SPL adapter is disabled. */
@@ -162,8 +174,9 @@ export const COLLATOR_LOCALE = {
   EN: "en-US",
 } as const;
 
-/** Default SPL API base URL. Verified during the S6 adapter slice before use. */
-export const DEFAULT_NATIONAL_ADDRESS_BASE_URL = "https://api.address.gov.sa";
+/** Default SPL API base URL verified against the National Address API portal. */
+export const DEFAULT_NATIONAL_ADDRESS_BASE_URL =
+  "https://apina.address.gov.sa/NationalAddress";
 
 /** Default bounded outbound timeout for the optional SPL adapter. */
 export const DEFAULT_TIMEOUT_MS = 15_000;
@@ -174,16 +187,73 @@ export const DEFAULT_RETRY = {
   BASE_DELAY_MS: 250,
 } as const;
 
-/** SPL endpoints. Verified during S6 before adapter activation. */
+/** SPL endpoints verified during S6 before adapter activation. */
 export const SPL_ENDPOINTS = {
-  RESOLVE: "/national-address/v1/addresses/short",
-  VERIFY: "/national-address/v1/addresses/verify",
+  RESOLVE: "/NationalAddressByShortAddress/NationalAddressByShortAddress",
+  VERIFY: "/v3.1/address/address-verify",
 } as const;
 
-/** SPL query types. Verified during S6 before adapter activation. */
+/** SPL query types used as cache namespaces. */
 export const QUERY_TYPE = {
   SHORT_ADDRESS: "short_address",
   NATIONAL_ADDRESS: "national_address",
+} as const;
+
+/** SPL cache state returned by adapter-backed responses. */
+export const SPL_CACHE_STATE = {
+  HIT: "hit",
+  MISS: "miss",
+  STALE: "stale",
+} as const;
+
+/** SPL query/header field names. */
+export const SPL_FIELD = {
+  API_KEY: "api_key",
+  FORMAT: "format",
+  LANGUAGE: "language",
+  SHORT_ADDRESS: "shortaddress",
+  BUILDING_NUMBER: "Buildingnumber",
+  ADDITIONAL_NUMBER: "Additionalnumber",
+  ZIP_CODE: "Zipcode",
+} as const;
+
+/** SPL JSON response field names documented on address search/verify pages. */
+export const SPL_RESPONSE_FIELD = {
+  ADDRESSES: "Addresses",
+  TOTAL_SEARCH_RESULTS: "totalSearchResults",
+  ADDRESS_FOUND: "addressfound",
+  ADDRESS_1: "Address1",
+  ADDRESS_2: "Address2",
+  BUILDING_NUMBER: "BuildingNumber",
+  STREET: "Street",
+  DISTRICT: "District",
+  CITY: "City",
+  POST_CODE: "PostCode",
+  ADDITIONAL_NUMBER: "AdditionalNumber",
+  REGION_NAME: "RegionName",
+  LATITUDE: "Latitude",
+  LONGITUDE: "Longitude",
+  OBJECT_LAT_LONG: "ObjLatLng",
+} as const;
+
+/** SPL fixed query values. */
+export const SPL_FORMAT = {
+  JSON: "JSON",
+} as const;
+
+/** SPL API language codes. */
+export const SPL_LANGUAGE = {
+  AR: "A",
+  EN: "E",
+} as const;
+
+/** Accepted short-address format: four letters followed by four digits. */
+export const SHORT_ADDRESS_PATTERN = /^[A-Z]{4}\d{4}$/;
+
+/** Cache-key helpers for module-owned National Address cache rows. */
+export const CACHE_KEY = {
+  SEPARATOR: ":",
+  PART_SEPARATOR: "|",
 } as const;
 
 /** SPL cache TTL settings in milliseconds. */

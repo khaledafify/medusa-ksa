@@ -69,11 +69,17 @@ describe("Saudi Address checkout validation", () => {
         [SHIPPING_ADDRESS_FIELD.METADATA]: {
           [ADDRESS_METADATA_KEY.CITY_CODE]: "3",
           [ADDRESS_METADATA_KEY.DISTRICT_CODE]: "101",
+          [ADDRESS_METADATA_KEY.BUILDING_NUMBER]: "8228",
+          [ADDRESS_METADATA_KEY.POST_CODE]: "12643",
+          [ADDRESS_METADATA_KEY.ADDITIONAL_NUMBER]: "2121",
         },
       }),
     ).toEqual({
       cityCode: "3",
       districtCode: "101",
+      buildingNumber: "8228",
+      postCode: "12643",
+      additionalNumber: "2121",
       cityName: "Riyadh",
       districtName: "Olaya",
     });
