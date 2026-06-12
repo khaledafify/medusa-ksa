@@ -68,6 +68,9 @@ importers:
       medusa-fulfillment-torod:
         specifier: workspace:*
         version: link:../../packages/fulfillment/torod
+      medusa-notification-unifonic:
+        specifier: workspace:*
+        version: link:../../packages/notifications/unifonic
       medusa-payment-moyasar:
         specifier: workspace:*
         version: link:../../packages/payments/moyasar

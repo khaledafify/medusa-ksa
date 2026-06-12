@@ -11,6 +11,7 @@
     "@medusajs/medusa": "^2.13.0",
     "awilix": "^8.0.1",
     "medusa-fulfillment-torod": "workspace:*",
+    "medusa-notification-unifonic": "workspace:*",
     "medusa-payment-moyasar": "workspace:*",
     "medusa-plugin-zatca": "workspace:*",
     "pg": "^8.13.0",
