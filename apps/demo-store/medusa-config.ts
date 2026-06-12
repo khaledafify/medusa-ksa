@@ -55,5 +55,21 @@ export default defineConfig({
         ],
       },
     },
+    {
+      // Re-declare the Notification module to register Unifonic for SMS.
+      // AppSid and Sender ID are read env-first by the provider.
+      resolve: "@medusajs/medusa/notification",
+      options: {
+        providers: [
+          {
+            resolve: "medusa-notification-unifonic/providers/unifonic",
+            id: "unifonic",
+            options: {
+              channels: ["sms"],
+            },
+          },
+        ],
+      },
+    },
   ],
 })

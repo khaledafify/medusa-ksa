@@ -102,6 +102,11 @@ export const OPTION_HINTS = {
 export const ERROR_MESSAGES = {
   INVALID_RECIPIENT:
     "recipient must be a Saudi mobile number in 05xxxxxxxx, 9665xxxxxxxx, or +9665xxxxxxxx format.",
+  MISSING_TEXT:
+    "notification.content.text is required; render the SMS body before calling the Unifonic provider.",
+  MISSING_SENDER:
+    "sender id is required — set UNIFONIC_SENDER_ID or notification.from.",
+  UNSUPPORTED_CHANNEL: "Unifonic provider only supports the sms channel.",
   PROVIDER_REJECTED: "Unifonic rejected the SMS request.",
   MISSING_MESSAGE_ID:
     "Unifonic accepted the SMS request without returning a message id.",
@@ -113,4 +118,9 @@ export const ERROR_FORMAT = {
   DETAIL_SEPARATOR: ": ",
   CODE_OPEN: " (",
   CODE_CLOSE: ")",
+} as const;
+
+/** Notification DTO field names used by the Medusa service boundary. */
+export const NOTIFICATION_FIELDS = {
+  TEXT: "text",
 } as const;
