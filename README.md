@@ -121,7 +121,7 @@ Each package publishes independently to npm with its own README and changelog. *
 | `medusa-notification-taqnyat` | [`notifications/taqnyat`](./packages/notifications/taqnyat) | Arabic SMS via Taqnyat | 📋 Planned |
 | **Compliance & tooling** | | | |
 | `medusa-plugin-zatca` | [`zatca`](./packages/zatca) | **ZATCA / Fatoora Phase 2** e-invoicing — tax-correct Simplified (B2C) reporting, signed UBL + QR, credit/debit notes for order lifecycle events _(flagship; B2B clearance & multi-EGS planned)_ | 🚧 Beta |
-| `medusa-plugin-saudi-address` | [`address-saudi`](./packages/address-saudi) | Saudi National Address validation | 📋 Planned |
+| `medusa-plugin-saudi-address` | [`address-saudi`](./packages/address-saudi) | Saudi regions/cities/districts, structural validation, and optional SPL short-address resolve | 🚧 Beta |
 | `create-medusa-ksa-app` | [`create-medusa-ksa-app`](./packages/create-medusa-ksa-app) | One-command KSA store scaffolder | 📋 Planned |
 
 ## 🧩 How it works
