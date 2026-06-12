@@ -66,6 +66,59 @@ export const VALIDATION_REASON = {
   DISTRICT_CITY_MISMATCH: "district_city_mismatch",
 } as const;
 
+/** Public Store API routes served by this plugin. */
+export const STORE_ROUTE = {
+  REGIONS: "/store/saudi-address/regions",
+  CITIES: "/store/saudi-address/cities",
+  DISTRICTS: "/store/saudi-address/districts",
+  SEARCH: "/store/saudi-address/search",
+  VALIDATE: "/store/saudi-address/validate",
+  RESOLVE: "/store/saudi-address/resolve",
+} as const;
+
+/** Store API request field names. */
+export const STORE_FIELD = {
+  LOCALE: "locale",
+  REGION_CODE: "region_code",
+  CITY_CODE: "city_code",
+  QUERY: "q",
+  LIMIT: "limit",
+  CITY_NAME: "city_name",
+  DISTRICT_CODE: "district_code",
+  DISTRICT_NAME: "district_name",
+  SHORT_ADDRESS: "short_address",
+} as const;
+
+/** Store API response envelope keys. */
+export const STORE_RESPONSE_KEY = {
+  REGIONS: "regions",
+  CITIES: "cities",
+  DISTRICTS: "districts",
+  RESULTS: "results",
+  VALIDATION: "validation",
+  RESOLVE: "resolve",
+} as const;
+
+/** Resolve response status while the optional SPL adapter is disabled. */
+export const SPL_RESOLVE_STATUS = {
+  DISABLED: "disabled",
+} as const;
+
+/** Resolve response message while the optional SPL adapter is disabled. */
+export const SPL_RESOLVE_DISABLED_MESSAGE =
+  "Enable the SPL adapter to use short-address resolve.";
+
+/** HTTP status codes used by Store API route handlers. */
+export const HTTP_STATUS = {
+  NOT_IMPLEMENTED: 501,
+} as const;
+
+/** HTTP methods used in route middleware definitions. */
+export const HTTP_METHOD = {
+  GET: "GET",
+  POST: "POST",
+} as const;
+
 /** Riyadh sort pin constants from the upstream dataset. */
 export const RIYADH_REGION_CODE = "RD";
 export const RIYADH_CITY_CODE = "3";
@@ -117,6 +170,7 @@ export const TTL = {
 
 /** Search result bounds. */
 export const SEARCH_LIMIT = {
+  MIN: 1,
   DEFAULT: 20,
   MAX: 100,
 } as const;
