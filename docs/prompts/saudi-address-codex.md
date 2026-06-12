@@ -43,6 +43,21 @@ pnpm lint
 
 ---
 
+## EXECUTION LOOP (run until finish — do not wait for human input between tasks)
+Repeat for every task S0 → S6.2 in order:
+1. Implement the task (tests first), to the **Clean-code bar** below.
+2. Run **Gate A + Gate B + Gate C**.
+3. All green → commit clean → **immediately start the next task**. Red → fix; after 2 failed attempts on the same gate → **STOP and report**.
+4. After each **slice** (S1, S2, …) post a one-line status (what, gate results, coverage %) **and keep going** — do not pause for approval.
+Exit the loop only when **all tasks are done** (FINAL ACCEPTANCE all true) **or** a hard **STOP condition** fires (missing prereq, docs contradict the PRD, a gate red after 2 attempts, or a real decision needed). Never fake a pass to keep the loop moving.
+
+## CLEAN-CODE BAR (applies to every task)
+- Small, single-responsibility functions; thin service methods; pure, injectable I/O (inject fetch/clock so cache-TTL/outage are testable). No hidden global state.
+- **Fully typed** — no `any`/`as any`/ts-ignore in non-test code; typed public APIs; JSDoc on every exported method. Names match `CONTEXT.md`.
+- **Zero magic strings** (the constants contract). Errors via `KsaError`/`toMedusaError`; no secret in any message/log.
+- No dead code, no commented-out code, no TODO in shipped paths. Match `packages/payments/moyasar` style exactly.
+- Tests are behavior-first and cover success + failure + the named corner case (cache-hit / stale / cold-miss / strict / outage); deterministic (mocked network + injected clock).
+
 # TASKS (in order; each = Procedure A+B+C)
 
 ### S0 — Ground the API ✋ do first
