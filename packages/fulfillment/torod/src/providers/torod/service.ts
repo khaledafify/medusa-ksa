@@ -44,6 +44,16 @@ interface TorodRatesResponse {
   [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
 }
 
+interface TorodResolvedCity {
+  cityId: string;
+  cityName: string;
+}
+
+type TorodCityContext = Pick<
+  CalculateShippingOptionPriceDTO["context"],
+  "shipping_address"
+>;
+
 /**
  * Medusa v2 Fulfillment provider for the Torod courier aggregator.
  *
@@ -103,14 +113,24 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
   /**
    * Checkout shipping-method data validation hook.
    *
-   * T2.4 will resolve serviceability and persist Torod city metadata here.
+   * Resolves serviceability and persists Torod city metadata onto fulfillment
+   * data so later rate/booking calls do not infer from free-text city names.
    */
-  override validateFulfillmentData(
+  override async validateFulfillmentData(
     _optionData: Record<string, unknown>,
     data: Record<string, unknown>,
-    _context: ValidateFulfillmentDataContext,
+    context: ValidateFulfillmentDataContext,
   ): Promise<Record<string, unknown>> {
-    return Promise.resolve(data);
+    try {
+      const city = await this.customerCity(data, context);
+      return {
+        ...data,
+        [FULFILLMENT_DATA_KEYS.CITY_CODE]: city.cityId,
+        [FULFILLMENT_DATA_KEYS.CITY_NAME]: city.cityName,
+      };
+    } catch (err) {
+      throw toMedusaError(err);
+    }
   }
 
   /**
@@ -296,11 +316,23 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
 
   private async customerCityId(
     data: Record<string, unknown>,
-    context: CalculateShippingOptionPriceDTO["context"],
+    context: TorodCityContext,
   ): Promise<string> {
+    return (await this.customerCity(data, context)).cityId;
+  }
+
+  private async customerCity(
+    data: Record<string, unknown>,
+    context: TorodCityContext,
+  ): Promise<TorodResolvedCity> {
     const resolvedCityId = this.stringField(data, FULFILLMENT_DATA_KEYS.CITY_CODE);
     if (resolvedCityId !== undefined) {
-      return resolvedCityId;
+      return {
+        cityId: resolvedCityId,
+        cityName:
+          this.stringField(data, FULFILLMENT_DATA_KEYS.CITY_NAME) ??
+          this.shippingCity(context),
+      };
     }
 
     const cityName = this.shippingCity(context);
@@ -311,10 +343,13 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
         [TOROD_REQUEST_FIELDS.PAGE]: 1,
       },
     });
-    return this.cityIdFromResponse(response, cityName);
+    return this.cityFromResponse(response, cityName);
   }
 
-  private cityIdFromResponse(response: TorodCitiesResponse, cityName: string): string {
+  private cityFromResponse(
+    response: TorodCitiesResponse,
+    cityName: string,
+  ): TorodResolvedCity {
     const citiesValue = response[TOROD_RESPONSE_FIELDS.DATA];
     if (!Array.isArray(citiesValue)) {
       throw this.providerError(TOROD_ERROR_MESSAGES.CITIES_DATA_MALFORMED);
@@ -338,7 +373,13 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     if (cityId === undefined) {
       throw this.providerError(TOROD_ERROR_MESSAGES.CITY_UNRESOLVABLE);
     }
-    return cityId;
+    return {
+      cityId,
+      cityName:
+        this.stringField(city, TOROD_RESPONSE_FIELDS.CITY_NAME) ??
+        this.stringField(city, TOROD_RESPONSE_FIELDS.TITLE) ??
+        cityName,
+    };
   }
 
   private cityMatches(candidate: unknown, normalizedCity: string): boolean {
@@ -411,7 +452,7 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     );
   }
 
-  private shippingCity(context: CalculateShippingOptionPriceDTO["context"]): string {
+  private shippingCity(context: TorodCityContext): string {
     const city = context.shipping_address?.city;
     if (typeof city !== "string" || city.trim().length === 0) {
       throw this.providerError(

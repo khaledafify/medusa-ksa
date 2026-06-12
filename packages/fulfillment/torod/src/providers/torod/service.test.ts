@@ -286,14 +286,59 @@ describe("TorodFulfillmentProviderService", () => {
     await expect(makeService().validateOption({})).resolves.toBe(true);
   });
 
-  it("passes fulfillment data through until T2.4 resolves serviceability", async () => {
-    const data = { city: "Riyadh" };
+  it("resolves serviceable city metadata during fulfillment data validation", async () => {
+    stubTorodFetch({
+      cities: {
+        [TOROD_RESPONSE_FIELDS.DATA]: [
+          {
+            [TOROD_RESPONSE_FIELDS.CITIES_ID]: "101",
+            [TOROD_RESPONSE_FIELDS.CITY_NAME]: "Riyadh",
+          },
+        ],
+      },
+    });
+
+    const data = { existing: "value" };
 
     await expect(
-      makeService().validateFulfillmentData({}, data, {
-        from_location: { id: "sloc_test" },
-      } as Parameters<TorodFulfillmentProviderService["validateFulfillmentData"]>[2]),
-    ).resolves.toBe(data);
+      makeService().validateFulfillmentData(
+        {},
+        data,
+        rateContext() as unknown as Parameters<
+          TorodFulfillmentProviderService["validateFulfillmentData"]
+        >[2],
+      ),
+    ).resolves.toEqual({
+      existing: "value",
+      [FULFILLMENT_DATA_KEYS.CITY_CODE]: "101",
+      [FULFILLMENT_DATA_KEYS.CITY_NAME]: "Riyadh",
+    });
+  });
+
+  it("rejects unserviceable city during fulfillment data validation", async () => {
+    stubTorodFetch({
+      cities: {
+        [TOROD_RESPONSE_FIELDS.DATA]: [
+          {
+            [TOROD_RESPONSE_FIELDS.CITIES_ID]: "202",
+            [TOROD_RESPONSE_FIELDS.CITY_NAME]: "Jeddah",
+          },
+        ],
+      },
+    });
+
+    await expect(
+      makeService().validateFulfillmentData(
+        {},
+        {},
+        rateContext() as unknown as Parameters<
+          TorodFulfillmentProviderService["validateFulfillmentData"]
+        >[2],
+      ),
+    ).rejects.toMatchObject({
+      code: KsaErrorCodes.INVALID_INPUT,
+      message: expect.stringContaining(TOROD_ERROR_MESSAGES.CITY_UNRESOLVABLE),
+    });
   });
 
   it("advertises calculated rates only when a Torod courier is present", async () => {
