@@ -51,25 +51,25 @@ A **Torod API account + sandbox key** (`TOROD_CLIENT_ID + TOROD_CLIENT_SECRET`) 
 # TASKS (in order)
 
 ## S1 — Scaffold + client
-- **T1.1 Scaffold** `packages/fulfillment/torod`: package.json (`medusa-fulfillment-torod`, `build: medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), `tsconfig.json`+`tsconfig.build.json` (mirror moyasar), `vitest.config.ts`, `.env.example` (`TOROD_CLIENT_ID + TOROD_CLIENT_SECRET`, `TOROD_BASE_URL?`, `TOROD_DEFAULT_WEIGHT_KG?`, `TOROD_DEFAULT_PACKAGE_CM?`, `TOROD_WEBHOOK_SECRET?`). **Gate:** `pnpm install` resolves core; typecheck; syncpack consistent.
+- **T1.1 Scaffold** `packages/fulfillment/torod`: package.json (`medusa-fulfillment-torod`, `build: medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), `tsconfig.json`+`tsconfig.build.json` (mirror moyasar), `vitest.config.ts`, `.env.example` (`TOROD_CLIENT_ID + TOROD_CLIENT_SECRET`, `TOROD_BASE_URL?`, `TOROD_DEFAULT_WEIGHT_KG?`, `TOROD_DEFAULT_BOX_COUNT?`, `TOROD_WEBHOOK_SECRET?`). **Gate:** `pnpm install` resolves core; typecheck; syncpack consistent.
 - **T1.2 Loader + options** (`createLoader`, `TOROD_CLIENT_ID + TOROD_CLIENT_SECRET` required, fail-fast). **Gate:** boot throws `KsaError` naming the var on missing key (test); boots with valid config.
 - **T1.3 `TorodClient`** over core `HttpClient` (base URL, auth per TOROD-API-NOTES). **Gate:** mocked-fetch tests — auth header correct, non-2xx → `KsaError`, no key in error messages.
 
 ## S2 — Options + rates
 - **T2.1 `getFulfillmentOptions`** — one option per Torod courier (from the couriers endpoint or a documented static set per the notes). **Gate:** returns one option per courier with stable ids.
-- **T2.2 `calculatePrice`** — live rate-shop: weight from cart items, **package dims from `TOROD_DEFAULT_PACKAGE_CM`**, origin from stock location, destination from cart address → return the option's courier rate. **Gate:** returns the right courier's rate using the default package (mocked Torod); **missing weight ⇒ unavailable; no package ⇒ unavailable; unserviceable city ⇒ unavailable** (tests) — never a guessed price; `TOROD_DEFAULT_WEIGHT_KG` / `TOROD_DEFAULT_PACKAGE_CM` apply only when set.
+- **T2.2 `calculatePrice`** via `POST /courier/partners/list` — inputs **weight + `customer_city_id` (resolved) + `no_of_box` (default 1) + order_total + payment** (no dimensions — S0). **Gate:** returns the right courier's rate (mocked Torod); **missing weight ⇒ unavailable; unresolvable city ⇒ unavailable** (tests) — never a guessed price; `TOROD_DEFAULT_WEIGHT_KG`/`TOROD_DEFAULT_BOX_COUNT` only when set.
 - **T2.3 `validateFulfillmentData`** — serviceability + city-code mapping (if Torod requires a city code, not free text). **Gate:** valid data passes; unserviceable/unknown city rejected with a clear `KsaError`.
 
 ## S3 — Book + label + cancel
-- **T3.1 `createFulfillment`** — book the shipment at fulfillment; **package from fulfillment-data override (explicit dims or `torodPackageTemplateId`) else `TOROD_DEFAULT_PACKAGE_CM`** → store tracking number + Torod shipment ref in fulfillment data; cache the label if Torod returns it synchronously. **Gate:** sandbox booking returns a tracking number + shipment ref; the package override is honored.
-- **T3.2 `getFulfillmentDocuments`** (and return/shipment document methods as Medusa requires) — fetch the **label on demand** from Torod. **Gate:** label retrievable on demand whether Torod returns it sync or async.
+- **T3.1 `createFulfillment`** — **two-step**: `POST /order/create` → `order_id`, then `order/ship/process` with `courier_partner_id` → store `order_id` + `tracking_id` + **`aws_label` URL** on fulfillment data; box count = override else `TOROD_DEFAULT_BOX_COUNT`. **Gate:** sandbox booking returns tracking + a label URL.
+- **T3.2 `getFulfillmentDocuments`** — return the **stored `aws_label` URL** (no separate label endpoint — S0). **Gate:** label URL retrievable on demand from fulfillment data.
 - **T3.3 `cancelFulfillment`** — cancel a booked shipment if cancellable; terminal states are an idempotent no-op. **Gate:** cancel works; double-cancel / already-delivered is a no-op (test).
 
 ## S4 — Tracking webhook (or polling fallback)
 - **T4.1** Auto-wired webhook route (`src/api/...`) verified via core `verifyWebhook`/`verifySecretToken`; map Torod status → Medusa `shipped`/`delivered`; idempotent under redelivery. **If TOROD-API-NOTES shows no webhooks**, implement a scheduled polling job for active shipments instead (and note it). **Gate:** a tracking event flips fulfillment status; tampered/replayed rejected; redelivery is a no-op.
 
-## S5 — Returns
-- **T5.1 `createReturnFulfillment`** — book a reverse Torod shipment + on-demand return label, mirroring outbound. **If** the return API is genuinely separate/complex per the notes → **STOP, defer, and add a README future-work note** instead. **Gate:** sandbox return booking returns reverse tracking/label, OR a documented deferral.
+## S5 — Returns (DEFERRED — S0: no return-booking endpoint)
+- **T5.1 `createReturnFulfillment`** — throw a clear `KsaError` (NOT_SUPPORTED) naming the limitation; do not fake/stub a reverse booking; README the deferral. **Gate:** fails fast with the "not supported by Torod's public API" message; README lists returns as future work.
 
 ## S6 — Free-shipping default + docs
 - **T6.1 Seed promotion** — add a configurable **250 SAR free-shipping Promotion** to `apps/demo-store` setup (and note it for `create-medusa-ksa-app`). The provider is unchanged (ADR-0009). **Gate:** demo-store has the seeded promotion; **a test/grep asserts the provider source contains no hard-coded free-shipping threshold.**

@@ -36,8 +36,9 @@ Create `packages/fulfillment/torod/src/providers/torod/constants.ts` and import 
 
 - `PROVIDER_ID = "torod"` (the provider `identifier`).
 - `TOROD_PREFIX = "torod"` (KsaError prefix).
-- `ENV` map: `TOROD_CLIENT_ID`, `TOROD_CLIENT_SECRET`, `TOROD_BASE_URL`, `TOROD_DEFAULT_WEIGHT_KG`, `TOROD_DEFAULT_PACKAGE_CM`, `TOROD_WEBHOOK_SECRET`. (Torod uses **OAuth client-credentials**, not a single API key.)
-- `PACKAGE` constants — the default package dims parser (`TOROD_DEFAULT_PACKAGE_CM`, e.g. `10x10x10`), the package-templates endpoint, and the `FULFILLMENT_DATA_KEYS` for a per-booking package override (`packageLengthCm`/`widthCm`/`heightCm` **or** `torodPackageTemplateId`). Torod requires package L×W×H for rates + labels — no dimension literal inline.
+- `ENV` map: `TOROD_CLIENT_ID`, `TOROD_CLIENT_SECRET`, `TOROD_BASE_URL`, `TOROD_DEFAULT_WEIGHT_KG`, `TOROD_DEFAULT_BOX_COUNT`, `TOROD_WEBHOOK_SECRET`. (Torod uses **OAuth client-credentials**, not a single API key.)
+- **Package = box count, NOT dimensions** (S0 verified: Torod's public API has no dimension/template fields — templates are dashboard-only). Constant `DEFAULT_BOX_COUNT` (default `1`) + a `FULFILLMENT_DATA_KEYS.boxCount` override. Do **not** add package-dimension or package-template-id constants/endpoints — they do not exist.
+- `TOROD_ENDPOINTS` — fill from `TOROD-API-NOTES.md` (token, `/get-all/courier/partners`, `/courier/partners/list`, `/get-all/cities`, `/order/create`, `order/ship/process`, `order/track`, `/shipments/cancel`, …); normalize missing leading slashes. `TOROD_STATUS` = `Pending|Cancelled|Created|Shipped|Delivered|Failed|RTO` → `TOROD_STATUS_TO_MEDUSA`.
 - `TOROD_TOKEN` constants — the token endpoint path + the bearer header name (from the notes); the client exchanges id+secret for a short-lived token and **caches it until expiry, refreshing on 401**. No token logic inline outside the client.
 - `TOROD_ENDPOINTS` — every API path (rates, couriers, create shipment, label, track, cancel, return, cities) as named fields, filled from `TOROD-API-NOTES.md`. No path string inline in `client.ts`.
 - `optionIdForCourier(courierCode)` + `courierCodeFromOptionId(id)` — the **only** way to build/parse a fulfillment-option id; never hand-concatenate.
@@ -76,7 +77,7 @@ pnpm lint                                          # eslint + dependency-cruiser
 
 ## CLEAN CODE & MEDUSA BEST PRACTICES (apply throughout)
 - Provider class `extends AbstractFulfillmentProviderService`, `static identifier = PROVIDER_ID`; implement the **exact** required method set (verify the list — likely `getFulfillmentOptions`, `validateFulfillmentData`, `validateFulfillmentOption`, `canCalculate`, `calculatePrice`, `createFulfillment`, `cancelFulfillment`, `createReturnFulfillment`, `getFulfillmentDocuments`, `getReturnDocuments`, `getShipmentDocuments`, `retrieveDocuments` — implement what the version defines; do not invent).
-- **Orders compatibility:** `createFulfillment` builds the Torod shipment from the order's items + shipping address + origin stock location; tracking number + label must surface on the order's fulfillment in admin; `cancelFulfillment` reflects on the order; `createReturnFulfillment` ties into Medusa's return (RMA) flow; amounts via `SarAmount`.
+- **Orders compatibility:** `createFulfillment` builds the Torod order/shipment from the order's items + shipping address + origin stock location; tracking number + `aws_label` URL must surface on the order's fulfillment in admin; `cancelFulfillment` reflects on the order; `createReturnFulfillment` is **NOT_SUPPORTED** (returns deferred — S0); amounts via `SarAmount`.
 - **Admin settings compatibility:** after registering in the Fulfillment module `providers` array in `apps/demo-store/medusa-config.ts`, the provider must be **selectable when an admin adds a Shipping Option** in Settings → Locations & Shipping, with `getFulfillmentOptions` populating the choices. **No custom UI** (CLAUDE.md §6). Verify it appears.
 - Thin methods, pure helpers, `KsaError`/`toMedusaError` at boundaries, deterministic + injectable I/O for tests, no hidden global state.
 
@@ -84,8 +85,8 @@ pnpm lint                                          # eslint + dependency-cruiser
 
 # TASK CHECKLIST (do in order; each task = Procedure A+B+C)
 
-### S0 — Ground the API (before any code)
-- [ ] Read docs.torod.co; write `packages/fulfillment/torod/TOROD-API-NOTES.md` with the **real** auth scheme + every endpoint (rates, couriers, create shipment, label, track, cancel, return, cities), request/response field names, the **webhook-vs-polling** answer, and the webhook signature/token scheme. If the docs contradict the PRD → **STOP and report.**
+### S0 — Ground the API ✅ DONE
+- [x] `packages/fulfillment/torod/TOROD-API-NOTES.md` is written and is the **API source of truth**. The PRD + this plan have been **revised to match it** (box count not dimensions; no package-template API; returns NOT_SUPPORTED/deferred; label = `aws_label` URL; two-step booking). **The earlier contradiction is resolved — proceed to T1.1.** (Keep the in-sandbox verifications the notes flag: token JSON-vs-multipart, the `/order/details` GET-with-body, and exact city resolution.)
 
 ### S1 — Scaffold, constants, loader, client
 - [ ] **T1.1** Scaffold the package (package.json `medusa-fulfillment-torod`, `build: medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), dual tsconfig + vitest (mirror moyasar), `.env.example`. *Accept:* install resolves core; typecheck; syncpack consistent.
@@ -96,19 +97,19 @@ pnpm lint                                          # eslint + dependency-cruiser
 ### S2 — Provider skeleton, options, rates
 - [ ] **T2.1** Provider class skeleton (`extends AbstractFulfillmentProviderService`, `static identifier = PROVIDER_ID`); register in `apps/demo-store/medusa-config.ts`. *Accept:* demo-store boots; provider appears in Settings → Shipping when adding a Shipping Option (admin compatibility — verify).
 - [ ] **T2.2** `getFulfillmentOptions` — one option per courier (ids via `optionIdForCourier`). *Accept:* one stable option per courier.
-- [ ] **T2.3** `calculatePrice` — live rate-shop (weight from cart items, **package dims from `TOROD_DEFAULT_PACKAGE_CM`**, origin from stock location, destination from cart address). *Accept:* returns the option's courier rate using the default package (mocked Torod); **missing weight ⇒ unavailable**, **no package ⇒ unavailable**, **unserviceable city ⇒ unavailable** (tests) — never a guessed price; `TOROD_DEFAULT_WEIGHT_KG` / `TOROD_DEFAULT_PACKAGE_CM` only when set.
+- [ ] **T2.3** `calculatePrice` via `POST /courier/partners/list` — inputs: **weight** (cart items), **`customer_city_id`** (resolve cart city via `/get-all/cities`), **`no_of_box`** (default 1), **order_total**, **payment**; return the option's courier `rate`. *Accept:* returns the right courier's rate (mocked Torod); **missing weight ⇒ unavailable**, **unresolvable city ⇒ unavailable** (tests) — never a guessed price; `TOROD_DEFAULT_WEIGHT_KG`/`TOROD_DEFAULT_BOX_COUNT` only when set.
 - [ ] **T2.4** `validateFulfillmentData` — serviceability + city-code mapping. *Accept:* valid passes; unknown/unserviceable city → clear `KsaError`.
 
 ### S3 — Book, label, cancel (orders compatibility)
-- [ ] **T3.1** `createFulfillment` — book at fulfillment; **package from fulfillment-data override (explicit dims or `torodPackageTemplateId`) else `TOROD_DEFAULT_PACKAGE_CM`**; store `torodShipmentId` + `trackingNumber` (+ cached `labelUrl` if sync) on fulfillment data; build the shipment from the **order** items/address/origin. *Accept:* sandbox booking returns tracking + shipment ref; the package override is honored (test); tracking surfaces on the order fulfillment in admin.
-- [ ] **T3.2** Document methods (`getFulfillmentDocuments` etc.) — fetch the **label on demand**. *Accept:* label retrievable whether Torod returns it sync or async.
+- [ ] **T3.1** `createFulfillment` — **two-step**: `POST /order/create` (name/email/phone/item_description/order_total/payment/weight/`no_of_box`/city_id/address from the **order**) → `order_id`; then `order/ship/process` (`order_id`, `warehouse`, `type`, `courier_partner_id`) → store `order_id` + `trackingNumber` (`tracking_id`) + **`labelUrl` (`aws_label`)** on fulfillment data; box count = fulfillment-data override else `TOROD_DEFAULT_BOX_COUNT`. *Accept:* sandbox booking returns tracking + label URL; tracking surfaces on the order fulfillment in admin.
+- [ ] **T3.2** Document methods (`getFulfillmentDocuments` etc.) — return the **stored `aws_label` URL** from the booking response (there is **no separate label endpoint**). *Accept:* the label URL is retrievable on demand from fulfillment data.
 - [ ] **T3.3** `cancelFulfillment` — cancel if cancellable; terminal = idempotent no-op. *Accept:* cancel works; double-cancel / delivered = no-op (test).
 
 ### S4 — Tracking sync
 - [ ] **T4.1** Auto-wired webhook route verified via core `verifyWebhook`/`verifySecretToken`; map `TOROD_STATUS_TO_MEDUSA` → mark the order's fulfillment `shipped`/`delivered`; idempotent under redelivery. **If notes show no webhooks → implement a polling job instead** (note it). *Accept:* a tracking event flips fulfillment status on the order; tampered/replayed rejected; redelivery no-op.
 
 ### S5 — Returns
-- [ ] **T5.1** `createReturnFulfillment` — reverse Torod shipment + on-demand return label, tied to Medusa's return flow. **If Torod's return API is genuinely separate → STOP, defer, README future-work note.** *Accept:* sandbox return booking returns reverse tracking/label, or a documented deferral.
+- [ ] **T5.1 — Returns DEFERRED (S0: no return-booking endpoint exists).** Implement `createReturnFulfillment` to **throw a clear `KsaError` (NOT_SUPPORTED)** naming the limitation; do **not** fake/stub a reverse booking. Document returns as future work in the README. *Accept:* `createReturnFulfillment` fails fast with the "not supported by Torod's public API" message; README lists returns as future work.
 
 ### S6 — Free shipping (Promotion, not provider) + docs
 - [ ] **T6.1** Seed a configurable **250 SAR free-shipping Promotion** in `apps/demo-store` setup (note it for `create-medusa-ksa-app`). Provider unchanged (ADR-0009). *Accept:* demo-store has the seeded promotion; **a test/grep asserts the provider source has no hard-coded free-shipping threshold.**
@@ -125,7 +126,7 @@ pnpm lint                                          # eslint + dependency-cruiser
 - [ ] dependency-cruiser: 0 violations (only `@medusa-ksa/core` intra-repo; `@medusajs/*` peer).
 - [ ] No `any`/ts-ignore in non-test src; no `fetch(`/`process.env` in non-loader src; no secret-leaking log/error (test proves).
 - [ ] Provider appears in admin Settings → Shipping; per-courier options selectable; **no custom UI**.
-- [ ] `createFulfillment`/`cancelFulfillment`/`createReturnFulfillment` integrate with the Medusa **order** flow (tracking/label on the order; returns via RMA).
+- [ ] `createFulfillment`/`cancelFulfillment` integrate with the Medusa **order** flow (tracking/label on the order); `createReturnFulfillment` fails fast NOT_SUPPORTED (returns deferred).
 - [ ] `calculatePrice` returns **unavailable, never a guess** on missing weight / unserviceable city (tests).
 - [ ] Free shipping is a seeded **Promotion**; provider returns the true rate (ADR-0009).
 - [ ] README + status honest; changeset present; commits clean (no AI attribution); no AI-tooling/secret committed.
