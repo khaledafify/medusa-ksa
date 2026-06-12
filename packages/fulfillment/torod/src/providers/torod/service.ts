@@ -15,19 +15,27 @@ import { KsaError, KsaErrorCodes, toMedusaError } from "@medusa-ksa/core";
 
 import { TorodClient } from "./client.js";
 import {
+  FULFILLMENT_DATA_KEYS,
   PROVIDER_ID,
+  TOROD_ENDPOINTS,
   TOROD_ERROR_MESSAGES,
+  TOROD_HTTP_METHOD,
   TOROD_PREFIX,
+  TOROD_RESPONSE_FIELDS,
+  optionIdForCourier,
 } from "./constants.js";
 import { resolveTorodOptions } from "./options.js";
 import type { TorodOptions } from "./options.js";
 
+interface TorodCourierPartnersResponse {
+  [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
+}
+
 /**
  * Medusa v2 Fulfillment provider for the Torod courier aggregator.
  *
- * T2.1 wires the provider into Medusa's native Fulfillment module. Courier
- * options, live rates, booking, cancellation, labels, and returns are filled in
- * by the later ordered tasks from the Phase 4 plan.
+ * Courier options come from Torod; rates, booking, cancellation, labels, and
+ * returns are filled in by the later ordered tasks from the Phase 4 plan.
  */
 export class TorodFulfillmentProviderService extends AbstractFulfillmentProviderService {
   static override identifier = PROVIDER_ID;
@@ -55,11 +63,19 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
 
   /**
    * Medusa calls this while creating Shipping Options in the native admin.
-   *
-   * T2.2 replaces the empty skeleton with one option per Torod courier.
    */
-  override getFulfillmentOptions(): Promise<FulfillmentOption[]> {
-    return Promise.resolve([]);
+  override async getFulfillmentOptions(): Promise<FulfillmentOption[]> {
+    try {
+      const response =
+        await this.client_.request<TorodCourierPartnersResponse>({
+          method: TOROD_HTTP_METHOD.GET,
+          path: TOROD_ENDPOINTS.COURIERS,
+        });
+
+      return this.courierOptionsFromResponse(response);
+    } catch (err) {
+      throw toMedusaError(err);
+    }
   }
 
   /**
@@ -104,7 +120,7 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     _data: CalculateShippingOptionPriceDTO["data"],
     _context: CalculateShippingOptionPriceDTO["context"],
   ): Promise<CalculatedShippingOptionPrice> {
-    return Promise.reject(this.notReady(TOROD_ERROR_MESSAGES.RATES_NOT_READY));
+    return Promise.reject(this.providerError(TOROD_ERROR_MESSAGES.RATES_NOT_READY));
   }
 
   /**
@@ -118,7 +134,9 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     _order: Partial<FulfillmentOrderDTO> | undefined,
     _fulfillment: Partial<Omit<FulfillmentDTO, "provider_id" | "data" | "items">>,
   ): Promise<CreateFulfillmentResult> {
-    return Promise.reject(this.notReady(TOROD_ERROR_MESSAGES.BOOKING_NOT_READY));
+    return Promise.reject(
+      this.providerError(TOROD_ERROR_MESSAGES.BOOKING_NOT_READY),
+    );
   }
 
   /**
@@ -130,7 +148,7 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     _data: Record<string, unknown>,
   ): Promise<Record<string, never>> {
     return Promise.reject(
-      this.notReady(TOROD_ERROR_MESSAGES.CANCELLATION_NOT_READY),
+      this.providerError(TOROD_ERROR_MESSAGES.CANCELLATION_NOT_READY),
     );
   }
 
@@ -151,7 +169,9 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
   override createReturnFulfillment(
     _fulfillment: Record<string, unknown>,
   ): Promise<CreateFulfillmentResult> {
-    return Promise.reject(this.notReady(TOROD_ERROR_MESSAGES.RETURNS_DEFERRED));
+    return Promise.reject(
+      this.providerError(TOROD_ERROR_MESSAGES.RETURNS_DEFERRED),
+    );
   }
 
   /** Returns documents are unavailable while returns are deferred. */
@@ -172,7 +192,73 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     return Promise.resolve();
   }
 
-  private notReady(message: string): Error {
+  private courierOptionsFromResponse(
+    response: TorodCourierPartnersResponse,
+  ): FulfillmentOption[] {
+    const couriers = response[TOROD_RESPONSE_FIELDS.DATA];
+    if (!Array.isArray(couriers)) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.COURIERS_DATA_MALFORMED);
+    }
+
+    const seenOptionIds = new Set<string>();
+    return couriers.map((courier) => {
+      const option = this.courierOption(courier);
+      if (seenOptionIds.has(option.id)) {
+        throw this.providerError(TOROD_ERROR_MESSAGES.COURIER_ID_DUPLICATE);
+      }
+      seenOptionIds.add(option.id);
+      return option;
+    });
+  }
+
+  private courierOption(courier: unknown): FulfillmentOption {
+    if (!this.isRecord(courier)) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.COURIER_ID_MISSING);
+    }
+
+    const courierId = this.stringField(courier, TOROD_RESPONSE_FIELDS.ID);
+    if (courierId === undefined) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.COURIER_ID_MISSING);
+    }
+
+    const courierName =
+      this.stringField(courier, TOROD_RESPONSE_FIELDS.TITLE) ?? courierId;
+    const courierMethod = this.stringField(courier, TOROD_RESPONSE_FIELDS.METHOD);
+    const option: FulfillmentOption = {
+      id: optionIdForCourier(courierId),
+      name: courierName,
+      is_return: false,
+      [FULFILLMENT_DATA_KEYS.TOROD_COURIER_CODE]: courierId,
+      [FULFILLMENT_DATA_KEYS.TOROD_COURIER_NAME]: courierName,
+    };
+
+    if (courierMethod !== undefined) {
+      option[FULFILLMENT_DATA_KEYS.TOROD_COURIER_METHOD] = courierMethod;
+    }
+
+    return option;
+  }
+
+  private stringField(
+    record: Record<string, unknown>,
+    key: string,
+  ): string | undefined {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value !== "string") {
+      return undefined;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+
+  private providerError(message: string): Error {
     return toMedusaError(
       new KsaError(message, {
         prefix: TOROD_PREFIX,

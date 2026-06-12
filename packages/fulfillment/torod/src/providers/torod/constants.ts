@@ -79,6 +79,9 @@ export const TOROD_TOKEN = {
 } as const;
 
 export const TOROD_ERROR_MESSAGES = {
+  COURIERS_DATA_MALFORMED: "Torod courier partners response did not include a data array.",
+  COURIER_ID_MISSING: "Torod courier partner response is missing a courier id.",
+  COURIER_ID_DUPLICATE: "Torod courier partners response included a duplicate courier id.",
   RATES_NOT_READY: "Torod live rates are not available until rate calculation is configured.",
   BOOKING_NOT_READY: "Torod shipment booking is not available until booking is configured.",
   CANCELLATION_NOT_READY: "Torod shipment cancellation is not available until cancellation is configured.",
