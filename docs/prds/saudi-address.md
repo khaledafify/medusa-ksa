@@ -1,73 +1,80 @@
-# PRD — `medusa-plugin-saudi-address` (Saudi National Address)
+# PRD — `medusa-plugin-saudi-address` (Saudi National Address, dataset-first)
 
 **Status:** ready for implementation · **Owner:** Codex/Cursor (implements) · **Design:** locked via grill-with-docs (Opus)
-**Authority:** `CLAUDE.md` · `docs/adr/0001`,`0002`,`0003`,`0010`,`0011` · `packages/core/CONTRACT.md` · `CONTEXT.md` (Addresses glossary) · `packages/payments/moyasar/**` (quality bar)
+**Authority:** `CLAUDE.md` · `docs/adr/0001`,`0002`,`0003`,`0010`,`0011`,`0012` · `packages/core/CONTRACT.md` · `CONTEXT.md` (Addresses glossary) · `packages/payments/moyasar/**` (quality bar) · `packages/zatca/**` (module-with-migrations reference)
 **Path:** `packages/address-saudi` → npm `medusa-plugin-saudi-address`. Built **after** Torod; **independent** of it (ADR-0003).
 
-> A **custom module** (it owns a cache table) that validates/resolves Saudi **National Addresses** against the Saudi Post (SPL) API — which is **down most of the time**, so resilience is the whole point. Backend-only, no custom UI. **Verify exact SPL endpoints/version (v3.1 vs v4) + auth against api.address.gov.sa — never assume.**
+> A **custom module** that serves Saudi geography + address validation **from a bundled offline dataset** (default, no network) with an **optional SPL adapter** for short-address resolution + official verification. Backend-only, no custom UI.
 
 ---
 
 ## 1. Locked design decisions (do not re-litigate)
 
-1. **Capabilities (ADR-0010):** v1 = **resolve-short-address + validate + free-text search**, plus **bundled regions/cities** and **lazy districts**. Geocoding / full reference trees deferred.
-2. **Resilient cache (ADR-0010):** custom module with a persistent cache; **cache-first → stale-serve on SPL outage → only a cold miss during an outage surfaces failure.** Lazy/on-demand. **Resolve+validate cached ~permanently; search short-TTL; districts lazy.**
-3. **Bundled geography (ADR-0010):** **regions + cities shipped as a bilingual (ar/en) seed** loaded at migration so listing endpoints work 100% regardless of SPL; refreshed from SPL opportunistically when up.
-4. **Ordering & i18n:** listing endpoints return **Riyadh-first, then locale-aware alphabetical** (Riyadh by a named id/code constant — no magic string; Arabic collation for `ar`, Latin for `en`). **ar + en on every response** per Medusa i18n.
-5. **Validation is advisory (ADR-0011):** the checkout hook **defaults to warn/flag** (writes `order.metadata.saudi_address_status` = `valid|unvalidated|unchecked`), **`strict` opt-in**, and **an outage never blocks** an order.
-6. **Surface (backend-only):** `/store` endpoints (`resolve`, `validate`, `search`, `regions`, `cities`, `districts`) + a **cart-completion workflow hook** writing the status flag. No module link, no storefront code, no custom UI.
+1. **Dataset-first (ADR-0010).** The default source is a **bundled offline dataset** of regions → cities → districts (bilingual ar/en, ~13 / ~4,580 / ~3,730), seeded into the DB at migration. **No required API, works 100% offline.**
+2. **Optional SPL adapter (ADR-0010).** When `NATIONAL_ADDRESS_API_KEY` is set, an opt-in adapter adds **short-address (RRRD2929) resolve + official verify** via SPL, **cache-first with stale-serve** (SPL is unreliable). **Off by default**; the package fully functions without it.
+3. **GPL data as a separate dependency (ADR-0012).** The dataset is GPL-2.0 → consumed as an **arms-length dependency** (own license + attribution), loaded at migration. The **plugin source stays MIT** — never vendor GPL into `src/`.
+4. **Capabilities.** Default (offline): list **regions/cities/districts**, **free-text search**, **structural validation** (city/district exist & consistent). Optional (SPL on): **short-address resolve**, **official verify**.
+5. **Ordering & i18n.** Listing endpoints return **Riyadh-first then locale-aware alphabetical** (Riyadh by a named id/code constant — no magic string; Arabic collation for `ar`, Latin for `en`). **ar + en on every response.**
+6. **Validation is advisory (ADR-0011).** The cart-completion hook writes `order.metadata.saudi_address_status` (`valid|unvalidated|unchecked`); **default warn/flag, `strict` opt-in**, and it **never blocks on an SPL outage** (falls open to structural-only).
+7. **Surface (backend-only).** `/store` endpoints: `regions`, `cities`, `districts`, `search`, `validate` (always); `resolve` (only when SPL adapter enabled). + the cart-completion hook. No module link, no storefront code, no custom UI.
 
 ## 2. Config
 
-`NATIONAL_ADDRESS_API_KEY` (required, env-first via core `createLoader`). Optional: `NATIONAL_ADDRESS_BASE_URL`/version, `SAUDI_ADDRESS_STRICT` (default `false` = warn), TTL overrides. No SPL secret is logged or returned from a route.
+**No required key** — the dataset default needs none. Optional: `NATIONAL_ADDRESS_API_KEY` (enables the SPL adapter), `NATIONAL_ADDRESS_BASE_URL`/version, `SAUDI_ADDRESS_STRICT` (default `false`). Via core `createLoader` (the API key is optional; everything else boots without it). No SPL secret logged or returned.
 
 ## 3. Data (Codex picks exact schema)
 
-- A **cache** table (opaque SPL responses for resolve/validate/search/districts): normalized `cache_key`, `query_type`, payload (json), `fetched_at`, stale marker, ttl by type.
-- A **bilingual regions/cities reference** (seeded): code, `name_en`, `name_ar`, region link for cities, `sort_weight` (Riyadh pinned). Migrations via `db-generate`/`db-migrate`.
-- The order-level flag lives in **order metadata** (no model needed for it).
+- **Geography (seeded from the GPL dependency):** `region` / `city` / `district` tables — code/id, `name_en`, `name_ar`, parent link, `sort_weight` (Riyadh pinned), optional lat/lon. Loaded at migration from the GPL-2.0 data dependency (ADR-0012).
+- **SPL cache (only for the optional adapter):** a `national_address_cache` table for short-address/verify responses (cache-first, stale-serve). Not used in dataset-only mode.
+- The order-level flag lives in **order metadata** (no model).
 
-## 4. Verify against api.address.gov.sa (never assume)
+## 4. The GPL data dependency (ADR-0012)
 
-Auth (API key header/scheme); the **API version** to target (v3.1 vs v4); the **FreeTextSearch**, **verify/validate**, **short-address resolve**, **regions**, **cities**, **districts** endpoints + request/response field names (incl. the **ar + en** name fields and the short-address format); rate limits (drives TTLs).
+Use `homaily/Saudi-Arabia-Regions-Cities-and-Districts` (GPL-2.0) as a **separate dependency** — an existing npm package wrapping it, or a dedicated GPL-2.0 data artifact — **never copied into the MIT `src/`**. Preserve its license + attribution; document it in the README. Load the JSON into the geography tables at migration. (A permissive-licensed equivalent is the escape hatch if the GPL dep ever becomes a problem.)
 
-## 5. Slices (each: test-first, small clean commits, gates green before advancing)
+## 5. Verify before coding the optional SPL adapter (only if/when implemented)
 
-- **S1 — Module skeleton + client.** Package (`medusa-plugin-saudi-address`, `medusa plugin:build`, exports per CLAUDE §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*`), dual tsconfig + vitest (mirror moyasar), `.env.example`. Cache + reference models; module wiring; `createLoader` (`NATIONAL_ADDRESS_API_KEY`, fail-fast); `SplClient` over core `HttpClient`; migrations.
-  *Accept:* boots fail-fast on missing key; migrations apply; client unit tests (mocked fetch) — auth header, errors→`KsaError`, no key leak.
-- **S2 — Cache-first service.** `resolve` / `validate` / `search` with **cache-first → SPL on miss → persist → stale-serve on outage**.
-  *Accept:* **cache hit makes no API call** (test); **SPL down + cache ⇒ returns stale** (test); **SPL down + cold miss ⇒ a clear "unavailable" result, never a fabricated address** (test); TTLs honored (resolve permanent, search short).
-- **S3 — Bundled geography.** Seed bilingual **regions + cities** at migration; `regions`/`cities` served **Riyadh-first then locale-aware alphabetical**; `districts` lazy-cached.
-  *Accept:* regions/cities return **with no SPL call** (seeded); **Riyadh first, rest alphabetical** per locale (test); ar+en present; districts lazy-cache + stale-serve.
-- **S4 — `/store` endpoints.** `resolve`, `validate`, `search`, `regions`, `cities`, `districts` (publishable-key authed), backed by S2/S3.
-  *Accept:* each endpoint returns the cached/seeded data; bilingual; no secret in responses.
-- **S5 — Checkout hook.** Cart-completion workflow hook → validate the shipping address → write `order.metadata.saudi_address_status`. **`strict` throws only when SPL is reachable and returns invalid; warn flags; outage always flags-and-allows.**
-  *Accept:* warn-mode flags `unvalidated` and **allows**; strict-mode **blocks** an invalid address (SPL up); **outage (down + no cache) flags-and-allows in both modes** (test) — never blocks.
-- **S6 — Docs + verify + ship.** `packages/address-saudi/README.md` (moyasar template): config, the resilience/strictness model, deferred items (geocoding, full reference). Verify against the SPL **sandbox/live** API; `pnpm changeset`; status honest.
-  *Accept:* README honest; a live SPL call works (or is documented as down with cache fallback proven); status `🚧 Beta` until verified, `✅ Stable` only after.
+For the SPL adapter (S6): auth/version (v3.1/v4), the short-address-resolve + verify endpoints + fields, rate limits → against api.address.gov.sa. The **dataset path needs no external verification** — it ships the data.
 
-## 6. Guard gates (every slice)
+## 6. Slices (each: test-first, small clean commits, gates green before advancing)
+
+- **S1 — Module + data dependency + seed.** Package (`medusa-plugin-saudi-address`, `medusa plugin:build`, exports per §10, peer `@medusajs/*`, dep `@medusa-ksa/core: workspace:*` + the GPL data dependency), dual tsconfig + vitest, `.env.example`. Geography models; migration that **seeds regions/cities/districts from the GPL dependency**; module wiring; `createLoader` (API key **optional**).
+  *Accept:* boots **without any key**; migration seeds the dataset; counts ≈ 13 / 4,580 / 3,730; README records the GPL data license + attribution.
+- **S2 — Geography service + listing.** `regions` / `cities(byRegion)` / `districts(byCity)` from the DB, **Riyadh-first then locale-aware alphabetical**, ar+en.
+  *Accept (tests):* regions/cities/districts return **with zero network**; Riyadh first then alphabetical per locale; both names present.
+- **S3 — Search + structural validation.** `search` (free-text over the dataset) + `validate` (city/district exist & mutually consistent).
+  *Accept (tests):* search returns dataset matches; validate returns `valid` for a real consistent city/district and `unvalidated` for a bad/mismatched one — **all offline**.
+- **S4 — `/store` endpoints.** `regions`, `cities`, `districts`, `search`, `validate` (publishable-key authed, Zod-validated). `resolve` registered but returns "enable SPL adapter" until S6.
+  *Accept:* each returns bilingual dataset data; no secret in responses.
+- **S5 — Checkout hook.** Cart-completion workflow hook → structural-validate the shipping address → write `order.metadata.saudi_address_status`. **warn (default) flags+allows; `strict` blocks a genuinely invalid address; never blocks on an SPL outage.**
+  *Accept (tests):* warn flags `unvalidated` + allows; strict blocks an invalid city/district; an enabled-SPL outage falls open to structural-only and never blocks.
+- **S6 — Optional SPL adapter (opt-in).** Behind `NATIONAL_ADDRESS_API_KEY`: `SplClient` over core `HttpClient`; `resolve` (short address) + official `verify`, **cache-first + stale-serve**. Verify endpoints against api.address.gov.sa first (write `SPL-API-NOTES.md`); STOP if docs contradict the PRD.
+  *Accept (tests, mocked):* with a key, resolve/verify work cache-first; cache hit ⇒ no call; SPL down + cache ⇒ stale; **without a key the adapter is cleanly off** and the package still works.
+- **S7 — Docs + ship.** `packages/address-saudi/README.md` (moyasar template): dataset-first model, the **GPL data dependency + attribution**, optional SPL adapter, deferred items. Update root README matrix; `pnpm changeset`.
+  *Accept:* README honest + GPL attribution present; status `🚧 Beta` until the SPL adapter is verified live (or `✅ Stable` for the dataset-only core once tested).
+
+## 7. Guard gates (every slice)
 
 **Green commands (exit 0):**
 ```
-pnpm --filter medusa-plugin-saudi-address build      # medusa plugin:build
+pnpm --filter medusa-plugin-saudi-address build
 pnpm --filter medusa-plugin-saudi-address test
 pnpm --filter medusa-plugin-saudi-address typecheck
-pnpm lint                                             # eslint + dependency-cruiser (0 violations) + syncpack
+pnpm lint
 ```
 
 **Address-specific guards:**
-- **Cache-first proven** — a cache hit issues **zero** SPL calls (test).
-- **Resilience proven** — SPL down + cache ⇒ **stale served**; SPL down + no cache ⇒ **never a fabricated address** and the checkout hook **never blocks** (tests).
-- **Advisory default** — warn flags + allows; strict blocks only when SPL is up and says invalid (ADR-0011; tested).
-- **Geography** — regions/cities serve **with no SPL call** (seeded), **Riyadh-first then alphabetical**, **ar + en** present (tests).
-- **Architecture** — custom **module** (ADR-0001) with migrations; all SPL I/O via core `HttpClient`; API key env-first, never logged/returned; `@medusajs/*` peer-only; only `@medusa-ksa/core` intra-repo import (dependency-cruiser 0); **no storefront code, no custom UI**.
-- **Honesty** — no faked SPL fields/endpoints (verify first); status not faked; clean commits, no AI attribution, AI tooling git-ignored.
+- **Offline-first proven** — regions/cities/districts/search/validate work with **zero network** (tests); the package **boots with no API key**.
+- **License hygiene (ADR-0012)** — the GPL data is a **separate dependency**, NOT copied into MIT `src/`; README carries the GPL-2.0 attribution. (A grep/check: no GPL data files vendored under the plugin's `src/`.)
+- **Geography correctness** — Riyadh-first then locale-aware alphabetical; ar+en present; seed counts sane (tests).
+- **Optional adapter** — off without a key (package still works); when on, cache-first + stale-serve + **never blocks on outage** (tests).
+- **Architecture** — custom **module** (ADR-0001) with migrations; SPL I/O (adapter only) via core `HttpClient`; key optional + never logged/returned; `@medusajs/*` peer-only; only `@medusa-ksa/core` intra-repo import (dependency-cruiser 0); **no storefront code, no custom UI**.
+- **Honesty** — no faked dataset rows or SPL fields; status not faked; clean commits, no AI attribution, AI tooling git-ignored.
 
-## 7. Definition of Done (v1)
+## 8. Definition of Done (v1)
 
-A store can resolve a short address → full National Address, validate an address, search, and list bilingual regions/cities — all **cache-first and surviving SPL outages**; the checkout hook flags (`warn` default) or blocks (`strict`) but **never blocks on an outage**; regions/cities are seeded + Riyadh-first; all four gate commands green; README honest. Reuses `@medusa-ksa/core`; respects ADR-0001/0002/0003/0010/0011. Independent of Torod.
+A store can list bilingual regions/cities/districts (Riyadh-first), search, and structurally validate a shipping address **entirely offline** with no API key; the checkout hook flags (`warn`) or blocks (`strict`) and **never blocks on an SPL outage**; an **optional** SPL adapter adds short-address resolve + official verify when a key is provided. The GPL geography is an arms-length dependency; the plugin is MIT. All four gates green; README honest. Reuses `@medusa-ksa/core`; respects ADR-0001/0002/0003/0010/0011/0012. Independent of Torod.
 
-## 8. Out of scope (v1)
+## 9. Out of scope (v1)
 
-Geocoding (lat-long ↔ address) · full district/region reference trees beyond what's fetched · bulk dataset import · any storefront code · custom UI · cryptocurrency. Deferred items README'd as future work.
+Geocoding (lat-long ↔ address) beyond what the dataset carries · boundary/GIS features · bulk SPL sync · any storefront code · custom UI · cryptocurrency. Deferred items README'd as future work.
