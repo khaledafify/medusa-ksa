@@ -37,6 +37,7 @@
     "db:migrate": "medusa db:migrate",
     "dev": "medusa develop",
     "e2e:moyasar": "medusa exec ./src/scripts/e2e-moyasar.ts",
+    "e2e:notifications": "node ./scripts/e2e-notifications-gate.mjs",
     "e2e:paid-refund": "medusa exec ./src/scripts/e2e-paid-refund.ts",
     "e2e:zatca-lifecycle": "medusa exec ./src/scripts/e2e-zatca-lifecycle.ts",
     "probe:tax-semantics": "medusa exec ./src/scripts/probe-tax-semantics.ts",

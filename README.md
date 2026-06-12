@@ -46,7 +46,7 @@ This is the layer you'd otherwise rebuild for every project — maintained once,
 - 🔑 **Env-first config** — drop in one API key; everything else is inferred (currency, halalas conversion, sandbox vs live from the key prefix). No "mode" flags.
 - 🛡️ **Fail-fast at boot** — a misconfigured key throws a clear, human-readable error *when the server starts*, never silently at checkout.
 - 🔁 **Webhooks auto-wired** — each package ships its own verified webhook route. Paste one URL into the provider dashboard; write no route code.
-- 🧩 **Native Medusa admin** — providers appear in Settings → Regions / Shipping automatically. No custom UI to learn (the lone exception: the ZATCA onboarding wizard).
+- 🧩 **Native Medusa admin** — providers appear in Settings → Regions / Shipping automatically. The only custom admin surfaces are the ZATCA onboarding wizard and the notification template editor.
 - 🔄 **One-line swaps** — every gateway implements the same interface, so changing providers is a single `resolve` change.
 - 🇸🇦 **KSA-correct by default** — SAR, integer halalas (no float money bugs), 15% VAT via native tax regions, Arabic-ready messaging.
 - 🔐 **Secure by construction** — secrets never touch the admin or logs; ZATCA credentials are encrypted at rest; webhook signatures are verified in constant time.
@@ -117,6 +117,7 @@ Each package publishes independently to npm with its own README and changelog. *
 | `medusa-fulfillment-spl` | [`fulfillment/spl`](./packages/fulfillment/spl) | Saudi Post (SPL) | 📋 Planned |
 | `medusa-fulfillment-imile` | [`fulfillment/imile`](./packages/fulfillment/imile) | iMile | 📋 Planned |
 | **Notifications** | | | |
+| `medusa-plugin-notifications` | [`notifications/engine`](./packages/notifications/engine) | Provider-agnostic order SMS engine — DB templates, safe rendering, subscribers, REST API, Settings → Notifications editor | 🚧 Beta |
 | `medusa-notification-unifonic` | [`notifications/unifonic`](./packages/notifications/unifonic) | Arabic SMS via Unifonic | 🚧 Beta |
 | `medusa-notification-taqnyat` | [`notifications/taqnyat`](./packages/notifications/taqnyat) | Arabic SMS via Taqnyat | 📋 Planned |
 | **Compliance & tooling** | | | |

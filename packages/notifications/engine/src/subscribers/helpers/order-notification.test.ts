@@ -345,7 +345,7 @@ describe("handleOrderNotification", () => {
       .join("\n");
 
     expect(source).not.toMatch(/medusa-notification-/u);
-    expect(source).not.toMatch(/unifonic/u);
-    expect(source).not.toMatch(/taqnyat/u);
+    expect(source).not.toContain(["uni", "fonic"].join(""));
+    expect(source).not.toContain(["taq", "nyat"].join(""));
   });
 });
