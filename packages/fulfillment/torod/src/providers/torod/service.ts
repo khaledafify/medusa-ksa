@@ -12,22 +12,35 @@ import type {
 } from "@medusajs/framework/types";
 
 import { KsaError, KsaErrorCodes, toMedusaError } from "@medusa-ksa/core";
+import type { KsaErrorCode } from "@medusa-ksa/core";
 
 import { TorodClient } from "./client.js";
 import {
+  DEFAULTS,
   FULFILLMENT_DATA_KEYS,
+  MEDUSA_CONTEXT_FIELDS,
   PROVIDER_ID,
   TOROD_ENDPOINTS,
   TOROD_ERROR_MESSAGES,
   TOROD_HTTP_METHOD,
   TOROD_PREFIX,
+  TOROD_REQUEST_FIELDS,
   TOROD_RESPONSE_FIELDS,
+  courierCodeFromOptionId,
   optionIdForCourier,
 } from "./constants.js";
 import { resolveTorodOptions } from "./options.js";
 import type { TorodOptions } from "./options.js";
 
 interface TorodCourierPartnersResponse {
+  [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
+}
+
+interface TorodCitiesResponse {
+  [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
+}
+
+interface TorodRatesResponse {
   [TOROD_RESPONSE_FIELDS.DATA]?: unknown;
 }
 
@@ -103,24 +116,41 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
   /**
    * Medusa calculated-price capability check.
    *
-   * T2.3 enables live rating once courier options and serviceability exist.
+   * Destination serviceability is checked during price calculation until T2.4
+   * moves city validation into `validateFulfillmentData`.
    */
-  override canCalculate(_data: CreateShippingOptionDTO): Promise<boolean> {
-    return Promise.resolve(false);
+  override canCalculate(data: CreateShippingOptionDTO): Promise<boolean> {
+    return Promise.resolve(this.courierCodeFromData(data.data ?? {}) !== undefined);
   }
 
   /**
    * Medusa calculated-price contract.
    *
-   * Return type is `CalculatedShippingOptionPrice`; until T2.3 implements live
-   * rate shopping, this fails closed instead of fabricating a rate.
+   * Return type is `CalculatedShippingOptionPrice`; missing required Torod
+   * inputs throw instead of fabricating a rate.
    */
-  override calculatePrice(
-    _optionData: CalculateShippingOptionPriceDTO["optionData"],
-    _data: CalculateShippingOptionPriceDTO["data"],
-    _context: CalculateShippingOptionPriceDTO["context"],
+  override async calculatePrice(
+    optionData: CalculateShippingOptionPriceDTO["optionData"],
+    data: CalculateShippingOptionPriceDTO["data"],
+    context: CalculateShippingOptionPriceDTO["context"],
   ): Promise<CalculatedShippingOptionPrice> {
-    return Promise.reject(this.providerError(TOROD_ERROR_MESSAGES.RATES_NOT_READY));
+    try {
+      const courierCode = this.selectedCourierCode(optionData);
+      const rateRequest = await this.rateRequest(optionData, data, context);
+      const response = await this.client_.request<TorodRatesResponse>({
+        method: TOROD_HTTP_METHOD.POST,
+        path: TOROD_ENDPOINTS.RATES,
+        body: rateRequest,
+      });
+      const rate = this.selectedCourierRate(response, courierCode);
+
+      return {
+        calculated_amount: rate,
+        is_calculated_price_tax_inclusive: false,
+      };
+    } catch (err) {
+      throw toMedusaError(err);
+    }
   }
 
   /**
@@ -211,6 +241,236 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     });
   }
 
+  private async rateRequest(
+    optionData: Record<string, unknown>,
+    data: Record<string, unknown>,
+    context: CalculateShippingOptionPriceDTO["context"],
+  ): Promise<Record<string, string | number>> {
+    const warehouse = this.warehouseCode(optionData, data, context);
+    const weight = this.shipmentWeight(context);
+    const orderTotal = this.orderTotal(context);
+    const boxCount = this.boxCount(data);
+    const payment = this.stringField(data, FULFILLMENT_DATA_KEYS.PAYMENT_METHOD) ??
+      DEFAULTS.PAYMENT;
+    const shipmentType =
+      this.stringField(data, FULFILLMENT_DATA_KEYS.SHIPMENT_TYPE) ??
+      DEFAULTS.SHIPMENT_TYPE;
+    const customerCityId = await this.customerCityId(data, context);
+
+    return {
+      [TOROD_REQUEST_FIELDS.WAREHOUSE]: warehouse,
+      [TOROD_REQUEST_FIELDS.CUSTOMER_CITY_ID]: customerCityId,
+      [TOROD_REQUEST_FIELDS.PAYMENT]: payment,
+      [TOROD_REQUEST_FIELDS.WEIGHT]: weight,
+      [TOROD_REQUEST_FIELDS.ORDER_TOTAL]: orderTotal,
+      [TOROD_REQUEST_FIELDS.BOX_COUNT]: boxCount,
+      [TOROD_REQUEST_FIELDS.SHIPMENT_TYPE]: shipmentType,
+      [TOROD_REQUEST_FIELDS.FILTER_BY]: DEFAULTS.RATE_FILTER,
+      [TOROD_REQUEST_FIELDS.IS_INSURANCE]: DEFAULTS.INSURANCE,
+    };
+  }
+
+  private selectedCourierRate(response: TorodRatesResponse, courierCode: string): number {
+    const ratesValue = response[TOROD_RESPONSE_FIELDS.DATA];
+    if (!Array.isArray(ratesValue)) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.RATE_DATA_MALFORMED);
+    }
+
+    const rates = ratesValue as unknown[];
+    const selectedRate = rates.find((rate) => {
+      if (!this.isRecord(rate)) {
+        return false;
+      }
+      return this.stringField(rate, TOROD_RESPONSE_FIELDS.ID) === courierCode;
+    });
+    if (!this.isRecord(selectedRate)) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.RATE_NOT_FOUND);
+    }
+
+    const rate = this.positiveNumberField(selectedRate, TOROD_RESPONSE_FIELDS.RATE);
+    if (rate === undefined) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.RATE_MISSING);
+    }
+    return rate;
+  }
+
+  private async customerCityId(
+    data: Record<string, unknown>,
+    context: CalculateShippingOptionPriceDTO["context"],
+  ): Promise<string> {
+    const resolvedCityId = this.stringField(data, FULFILLMENT_DATA_KEYS.CITY_CODE);
+    if (resolvedCityId !== undefined) {
+      return resolvedCityId;
+    }
+
+    const cityName = this.shippingCity(context);
+    const response = await this.client_.request<TorodCitiesResponse>({
+      method: TOROD_HTTP_METHOD.GET,
+      path: TOROD_ENDPOINTS.CITIES,
+      query: {
+        [TOROD_REQUEST_FIELDS.PAGE]: 1,
+      },
+    });
+    return this.cityIdFromResponse(response, cityName);
+  }
+
+  private cityIdFromResponse(response: TorodCitiesResponse, cityName: string): string {
+    const citiesValue = response[TOROD_RESPONSE_FIELDS.DATA];
+    if (!Array.isArray(citiesValue)) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.CITIES_DATA_MALFORMED);
+    }
+
+    const normalizedCity = this.normalizeForMatch(cityName);
+    const cities = citiesValue as unknown[];
+    const city = cities.find((candidate) =>
+      this.cityMatches(candidate, normalizedCity),
+    );
+    if (!this.isRecord(city)) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.CITY_UNRESOLVABLE,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+
+    const cityId =
+      this.stringField(city, TOROD_RESPONSE_FIELDS.CITIES_ID) ??
+      this.stringField(city, TOROD_RESPONSE_FIELDS.ID);
+    if (cityId === undefined) {
+      throw this.providerError(TOROD_ERROR_MESSAGES.CITY_UNRESOLVABLE);
+    }
+    return cityId;
+  }
+
+  private cityMatches(candidate: unknown, normalizedCity: string): boolean {
+    if (!this.isRecord(candidate)) {
+      return false;
+    }
+    return [
+      this.stringField(candidate, TOROD_RESPONSE_FIELDS.CITY_NAME),
+      this.stringField(candidate, TOROD_RESPONSE_FIELDS.CITY_NAME_AR),
+      this.stringField(candidate, TOROD_RESPONSE_FIELDS.TITLE),
+      this.stringField(candidate, TOROD_RESPONSE_FIELDS.TITLE_ARABIC),
+    ].some((name) => name !== undefined && this.normalizeForMatch(name) === normalizedCity);
+  }
+
+  private selectedCourierCode(optionData: Record<string, unknown>): string {
+    const courierCode = this.courierCodeFromData(optionData);
+    if (courierCode === undefined) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.COURIER_OPTION_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    return courierCode;
+  }
+
+  private courierCodeFromData(data: Record<string, unknown>): string | undefined {
+    const direct = this.stringField(
+      data,
+      FULFILLMENT_DATA_KEYS.TOROD_COURIER_CODE,
+    );
+    if (direct !== undefined) {
+      return direct;
+    }
+
+    const optionId = this.stringField(data, TOROD_RESPONSE_FIELDS.ID);
+    return optionId === undefined ? undefined : courierCodeFromOptionId(optionId);
+  }
+
+  private warehouseCode(
+    optionData: Record<string, unknown>,
+    data: Record<string, unknown>,
+    context: CalculateShippingOptionPriceDTO["context"],
+  ): string {
+    const fromData =
+      this.stringField(data, FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE) ??
+      this.stringField(optionData, FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE);
+    if (fromData !== undefined) {
+      return fromData;
+    }
+
+    const fromLocationMetadata = this.stringField(
+      context.from_location?.metadata ?? {},
+      FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE,
+    );
+    if (fromLocationMetadata !== undefined) {
+      return fromLocationMetadata;
+    }
+
+    const fromAddressMetadata = this.stringField(
+      context.from_location?.address?.metadata ?? {},
+      FULFILLMENT_DATA_KEYS.WAREHOUSE_CODE,
+    );
+    if (fromAddressMetadata !== undefined) {
+      return fromAddressMetadata;
+    }
+
+    throw this.providerError(
+      TOROD_ERROR_MESSAGES.WAREHOUSE_MISSING,
+      KsaErrorCodes.INVALID_INPUT,
+    );
+  }
+
+  private shippingCity(context: CalculateShippingOptionPriceDTO["context"]): string {
+    const city = context.shipping_address?.city;
+    if (typeof city !== "string" || city.trim().length === 0) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.CITY_UNRESOLVABLE,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    return city;
+  }
+
+  private shipmentWeight(context: CalculateShippingOptionPriceDTO["context"]): number {
+    let total = 0;
+    for (const item of context.items) {
+      if (item.requires_shipping === false) {
+        continue;
+      }
+      const quantity = this.positiveNumber(item.quantity);
+      const itemWeight =
+        this.positiveNumber(item.variant.weight) ?? this.options_.defaultWeightKg;
+      if (quantity === undefined || itemWeight === undefined) {
+        throw this.providerError(
+          TOROD_ERROR_MESSAGES.WEIGHT_MISSING,
+          KsaErrorCodes.INVALID_INPUT,
+        );
+      }
+      total += quantity * itemWeight;
+    }
+
+    if (total <= 0) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.WEIGHT_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+
+    return total;
+  }
+
+  private orderTotal(context: CalculateShippingOptionPriceDTO["context"]): number {
+    const record = context as Record<string, unknown>;
+    const total =
+      this.positiveNumber(record[MEDUSA_CONTEXT_FIELDS.TOTAL]) ??
+      this.positiveNumber(record[MEDUSA_CONTEXT_FIELDS.SUBTOTAL]);
+    if (total === undefined) {
+      throw this.providerError(
+        TOROD_ERROR_MESSAGES.ORDER_TOTAL_MISSING,
+        KsaErrorCodes.INVALID_INPUT,
+      );
+    }
+    return total;
+  }
+
+  private boxCount(data: Record<string, unknown>): number {
+    return (
+      this.positiveNumber(data[FULFILLMENT_DATA_KEYS.BOX_COUNT]) ??
+      this.options_.defaultBoxCount
+    );
+  }
+
   private courierOption(courier: unknown): FulfillmentOption {
     if (!this.isRecord(courier)) {
       throw this.providerError(TOROD_ERROR_MESSAGES.COURIER_ID_MISSING);
@@ -254,15 +514,59 @@ export class TorodFulfillmentProviderService extends AbstractFulfillmentProvider
     return trimmed.length > 0 ? trimmed : undefined;
   }
 
+  private positiveNumberField(
+    record: Record<string, unknown>,
+    key: string,
+  ): number | undefined {
+    return this.positiveNumber(record[key]);
+  }
+
+  private positiveNumber(value: unknown): number | undefined {
+    const numberValue = this.numberValue(value);
+    return numberValue !== undefined && numberValue > 0 ? numberValue : undefined;
+  }
+
+  private numberValue(value: unknown): number | undefined {
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : undefined;
+    }
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    if (typeof value !== "object" || value === null) {
+      return undefined;
+    }
+    if ("numeric" in value && typeof value.numeric === "number") {
+      return Number.isFinite(value.numeric) ? value.numeric : undefined;
+    }
+    if ("value" in value) {
+      return this.numberValue(value.value);
+    }
+    const candidate = value as { valueOf?: () => unknown };
+    if (typeof candidate.valueOf === "function") {
+      const raw = candidate.valueOf();
+      return raw === value ? undefined : this.numberValue(raw);
+    }
+    return undefined;
+  }
+
+  private normalizeForMatch(value: string): string {
+    return value.trim().toLocaleLowerCase();
+  }
+
   private isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
 
-  private providerError(message: string): Error {
+  private providerError(
+    message: string,
+    code: KsaErrorCode = KsaErrorCodes.PROVIDER_ERROR,
+  ): Error {
     return toMedusaError(
       new KsaError(message, {
         prefix: TOROD_PREFIX,
-        code: KsaErrorCodes.PROVIDER_ERROR,
+        code,
       }),
     );
   }

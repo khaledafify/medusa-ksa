@@ -82,7 +82,15 @@ export const TOROD_ERROR_MESSAGES = {
   COURIERS_DATA_MALFORMED: "Torod courier partners response did not include a data array.",
   COURIER_ID_MISSING: "Torod courier partner response is missing a courier id.",
   COURIER_ID_DUPLICATE: "Torod courier partners response included a duplicate courier id.",
-  RATES_NOT_READY: "Torod live rates are not available until rate calculation is configured.",
+  COURIER_OPTION_MISSING: "Torod courier option data is missing a courier id.",
+  CITIES_DATA_MALFORMED: "Torod cities response did not include a data array.",
+  CITY_UNRESOLVABLE: "Torod could not resolve the destination city.",
+  RATE_DATA_MALFORMED: "Torod rates response did not include a data array.",
+  RATE_NOT_FOUND: "Torod did not return a rate for the selected courier.",
+  RATE_MISSING: "Torod returned the selected courier without a usable rate.",
+  WEIGHT_MISSING: "Torod cannot calculate a rate without shipment weight.",
+  ORDER_TOTAL_MISSING: "Torod cannot calculate a rate without the cart order total.",
+  WAREHOUSE_MISSING: "Torod cannot calculate a rate without a warehouse code.",
   BOOKING_NOT_READY: "Torod shipment booking is not available until booking is configured.",
   CANCELLATION_NOT_READY: "Torod shipment cancellation is not available until cancellation is configured.",
   RETURNS_DEFERRED: "Returns are not supported by Torod's public API.",
@@ -222,6 +230,11 @@ export const FULFILLMENT_DATA_KEYS = {
   RATE: "rate",
   COD_FEE: "codFee",
   IS_OWN: "isOwn",
+} as const;
+
+export const MEDUSA_CONTEXT_FIELDS = {
+  TOTAL: "total",
+  SUBTOTAL: "subtotal",
 } as const;
 
 export const TOROD_WEBHOOK_FIELDS = {
