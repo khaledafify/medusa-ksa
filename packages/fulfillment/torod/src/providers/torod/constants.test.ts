@@ -6,6 +6,9 @@ import {
   FULFILLMENT_DATA_KEYS,
   PROVIDER_ID,
   TOROD_ENDPOINTS,
+  TOROD_HTTP_ERROR_MARKERS,
+  TOROD_HTTP_METHOD,
+  TOROD_MEDIA_TYPES,
   TOROD_PAYMENT,
   TOROD_REQUEST_FIELDS,
   TOROD_RESPONSE_FIELDS,
@@ -80,6 +83,11 @@ describe("Torod constants", () => {
     expect(TOROD_REQUEST_FIELDS.CUSTOMER_CITY_ID).toBe("customer_city_id");
     expect(TOROD_RESPONSE_FIELDS.LABEL_URL).toBe("aws_label");
     expect(TOROD_RESPONSE_FIELDS.TRACKING_ID).toBe("tracking_id");
+    expect(TOROD_HTTP_METHOD.POST).toBe("POST");
+    expect(TOROD_HTTP_ERROR_MARKERS.UNAUTHORIZED).toBe("responded 401");
+    expect(TOROD_MEDIA_TYPES.FORM_URLENCODED).toBe(
+      "application/x-www-form-urlencoded",
+    );
   });
 
   it("builds and parses courier option ids through the single helper pair", () => {

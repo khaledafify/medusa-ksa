@@ -50,9 +50,22 @@ export const TOROD_HTTP_HEADERS = {
   CONTENT_TYPE: "Content-Type",
 } as const;
 
+export const TOROD_HTTP_METHOD = {
+  GET: "GET",
+  POST: "POST",
+} as const;
+
+export const TOROD_HTTP_ERROR_MARKERS = {
+  BAD_REQUEST: "responded 400",
+  UNAUTHORIZED: "responded 401",
+  UNSUPPORTED_MEDIA_TYPE: "responded 415",
+  UNPROCESSABLE_ENTITY: "responded 422",
+} as const;
+
 export const TOROD_MEDIA_TYPES = {
   JSON: "application/json",
   FORM_DATA: "multipart/form-data",
+  FORM_URLENCODED: "application/x-www-form-urlencoded",
 } as const;
 
 export const TOROD_TOKEN = {
