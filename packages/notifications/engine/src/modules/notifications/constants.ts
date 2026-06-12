@@ -16,6 +16,11 @@ export const LOCALES = {
   AR: "ar",
 } as const;
 
+/** Currency labels emitted by SMS helpers. */
+export const CURRENCY = {
+  SAR: "SAR",
+} as const;
+
 /** Default locale for template resolution fallback. */
 export const DEFAULT_LOCALE = LOCALES.AR;
 
@@ -33,6 +38,11 @@ export const LIMITS = {
   GSM_MULTI_SEGMENT: 153,
   UNICODE_SINGLE_SEGMENT: 70,
   UNICODE_MULTI_SEGMENT: 67,
+} as const;
+
+/** Render warnings surfaced to API responses and tests. */
+export const WARNINGS = {
+  SMS_SEGMENTS: "sms.segment_count",
 } as const;
 
 /** Admin API base route for template management. */
