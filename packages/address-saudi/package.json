@@ -26,6 +26,7 @@
   "exports": {
     "./package.json": "./package.json",
     "./modules/*": "./.medusa/server/src/modules/*/index.js",
+    "./workflows": "./.medusa/server/src/workflows/index.js",
     "./*": "./.medusa/server/src/*.js"
   },
   "files": [

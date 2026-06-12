@@ -13,10 +13,15 @@ import {
 import SaudiAddressCity from "./models/city.js";
 import SaudiAddressDistrict from "./models/district.js";
 import SaudiAddressRegion from "./models/region.js";
+import {
+  getSaudiAddressOptions,
+  validateSaudiAddressOptions,
+} from "./types.js";
 import type {
   SaudiAddressLocale,
   SaudiAddressSearchInput,
   SaudiAddressSearchResult,
+  SaudiAddressOptions,
   SaudiAddressValidateInput,
   SaudiAddressValidateResult,
   SaudiCityListItem,
@@ -210,6 +215,22 @@ class SaudiAddressModuleService extends MedusaService({
   SaudiAddressCity,
   SaudiAddressDistrict,
 }) {
+  protected readonly options: SaudiAddressOptions;
+
+  constructor(container: Record<string, unknown>, options?: unknown) {
+    // eslint-disable-next-line prefer-rest-params
+    super(...(arguments as unknown as [Record<string, unknown>]));
+    this.options =
+      options === undefined
+        ? getSaudiAddressOptions()
+        : validateSaudiAddressOptions(options, {});
+  }
+
+  /** Whether checkout validation should block genuinely invalid addresses. */
+  isStrict(): boolean {
+    return this.options.strict;
+  }
+
   /**
    * List Saudi regions from the offline dataset, with Riyadh pinned first and
    * the remaining rows sorted by the requested locale.

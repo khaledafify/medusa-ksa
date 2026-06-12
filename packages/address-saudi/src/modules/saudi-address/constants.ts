@@ -59,6 +59,30 @@ export const ADDRESS_STATUS = {
 /** Order metadata key for the address validation status. */
 export const ORDER_METADATA_KEY = "saudi_address_status";
 
+/** Optional address metadata keys accepted by the checkout hook. */
+export const ADDRESS_METADATA_KEY = {
+  CITY_CODE: "saudi_city_code",
+  DISTRICT_CODE: "saudi_district_code",
+} as const;
+
+/** Shipping address fields read by the checkout hook. */
+export const SHIPPING_ADDRESS_FIELD = {
+  CITY: "city",
+  PROVINCE: "province",
+  METADATA: "metadata",
+} as const;
+
+/** Cart fields read or written by the checkout hook. */
+export const CART_FIELD = {
+  ID: "id",
+  METADATA: "metadata",
+  SHIPPING_ADDRESS: "shipping_address",
+} as const;
+
+/** Error emitted only when strict checkout validation finds an invalid address. */
+export const STRICT_CHECKOUT_VALIDATION_MESSAGE =
+  "Saudi address is structurally invalid.";
+
 /** Structural validation reasons. */
 export const VALIDATION_REASON = {
   CITY_NOT_FOUND: "city_not_found",

@@ -4,6 +4,7 @@ import { MODULE_PREFIX } from "../constants.js";
 import {
   SAUDI_ADDRESS_ENV_MAP,
   saudiAddressOptionsSchema,
+  setSaudiAddressOptions,
 } from "../types.js";
 
 /**
@@ -13,4 +14,5 @@ import {
 export default createLoader(saudiAddressOptionsSchema, {
   prefix: MODULE_PREFIX,
   envMap: SAUDI_ADDRESS_ENV_MAP,
+  onValidated: setSaudiAddressOptions,
 });

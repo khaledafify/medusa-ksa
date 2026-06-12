@@ -2,7 +2,11 @@ import { KsaError } from "@medusa-ksa/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import validateConfigLoader from "./loaders/validate-config.js";
-import { validateSaudiAddressOptions } from "./types.js";
+import {
+  getSaudiAddressOptions,
+  setSaudiAddressOptions,
+  validateSaudiAddressOptions,
+} from "./types.js";
 
 const EMPTY_ENV = {} as NodeJS.ProcessEnv;
 const ENV_KEYS = [
@@ -30,6 +34,7 @@ afterEach(() => {
       process.env[key] = value;
     }
   }
+  setSaudiAddressOptions(validateSaudiAddressOptions({}, EMPTY_ENV));
 });
 
 describe("validateSaudiAddressOptions", () => {
@@ -76,6 +81,14 @@ describe("validateSaudiAddressOptions", () => {
 describe("validate-config loader", () => {
   it("boots cleanly with no key in options or env", async () => {
     await expect(validateConfigLoader({ options: {} })).resolves.toBeUndefined();
+  });
+
+  it("stores boot-validated strict mode for runtime services", async () => {
+    process.env.SAUDI_ADDRESS_STRICT = "true";
+
+    await validateConfigLoader({ options: {} });
+
+    expect(getSaudiAddressOptions().strict).toBe(true);
   });
 
   it("rejects a malformed strict flag at boot", async () => {

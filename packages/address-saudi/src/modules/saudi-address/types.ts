@@ -67,6 +67,18 @@ export const saudiAddressOptionsSchema = z.object({
 /** Validated module options. */
 export type SaudiAddressOptions = z.infer<typeof saudiAddressOptionsSchema>;
 
+let currentSaudiAddressOptions = saudiAddressOptionsSchema.parse({});
+
+/** Store boot-validated module options for runtime services and hooks. */
+export function setSaudiAddressOptions(options: SaudiAddressOptions): void {
+  currentSaudiAddressOptions = options;
+}
+
+/** Read boot-validated module options. Defaults keep dataset-only installs off-network. */
+export function getSaudiAddressOptions(): SaudiAddressOptions {
+  return currentSaudiAddressOptions;
+}
+
 /** Locale accepted by geography list/search operations. */
 export type SaudiAddressLocale = "ar" | "en";
 
