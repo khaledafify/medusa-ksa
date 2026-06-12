@@ -543,7 +543,7 @@ const ZatcaSettingsPage = (): React.JSX.Element => {
           )}
         </div>
 
-        {(statusError || summaryError) && (
+        {(statusError ?? summaryError) && (
           <div className="flex items-start gap-3 px-6 py-4">
             <ExclamationCircle className="mt-0.5 shrink-0 text-ui-fg-error" />
             <div className="flex flex-col gap-y-1">
@@ -808,7 +808,7 @@ const ZatcaSettingsPage = (): React.JSX.Element => {
           </div>
         )}
 
-        {summary && summary.needs_attention === 0 && (
+        {summary?.needs_attention === 0 && (
           <div className="flex items-start gap-3 px-6 py-4">
             <CheckCircle className="mt-0.5 shrink-0 text-ui-fg-success" />
             <div className="flex flex-col gap-y-1">
@@ -898,7 +898,7 @@ const ZatcaSettingsPage = (): React.JSX.Element => {
         )}
       </Container>
 
-      {status && status.status === "production" && (
+      {status?.status === "production" && (
         <Container className="divide-y p-0">
           <div className="px-6 py-4">
             <SectionHeading
