@@ -18,6 +18,13 @@
   ],
   "semverGroups": [
     {
+      "label": "Saudi geography data is a pinned GPL-2.0 git artifact consumed arms-length (ADR-0012)",
+      "dependencies": ["saudi-geo"],
+      "dependencyTypes": ["prod"],
+      "packages": ["medusa-plugin-saudi-address"],
+      "isIgnored": true
+    },
+    {
       "label": "Use caret ranges everywhere (one shared policy across the suite)",
       "range": "^",
       "dependencies": ["**"],
